@@ -11,8 +11,6 @@ include(cmake/OutputDirectories.cmake)
 include(cmake/CopyFilesToBinary.cmake)
 include(cmake/CopySpecifiedFilesToBuild.cmake)
 
-# set(VULKANSDK_LIB_DIR ${CMAKE_SOURCE_DIR}/ThirdParty/vulkansdk/Lib)
-
 if (PROJECT_BINARY_DIR STREQUAL PROJECT_SOURCE_DIR)
     message(WARNING "The Binary directory of CMake cannot be the same as source directory!")
 endif()
