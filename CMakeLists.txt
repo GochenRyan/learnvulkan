@@ -9,6 +9,9 @@ add_definitions(-DUNICODE)
 
 include(cmake/OutputDirectories.cmake)
 include(cmake/CopyFilesToBinary.cmake)
+include(cmake/CopySpecifiedFilesToBuild.cmake)
+
+# set(VULKANSDK_LIB_DIR ${CMAKE_SOURCE_DIR}/ThirdParty/vulkansdk/Lib)
 
 if (PROJECT_BINARY_DIR STREQUAL PROJECT_SOURCE_DIR)
     message(WARNING "The Binary directory of CMake cannot be the same as source directory!")
@@ -20,6 +23,17 @@ endif()
 
 if (WIN32)
     add_definitions(-DNOMINMAX -D_USE_MATH_DEFINES)
+endif()
+
+set(ENV{VULKAN_SDK} ${CMAKE_SOURCE_DIR}/ThirdParty/vulkansdk)
+find_package(Vulkan REQUIRED)
+
+message(STATUS "==> FindVulkan.cmake path: ${_FINDVULKAN_CMAKE_FILE}")
+
+message("find vulkan : ${Vulkan_FOUND}")
+if (${Vulkan_FOUND})
+    message("vulkan libs : ${Vulkan_LIBRARY}")
+    copy_specified_files_to_build(FILES ${Vulkan_LIBRARY})
 endif()
 
 set(BUILD_SHARED_LIBS ON)
