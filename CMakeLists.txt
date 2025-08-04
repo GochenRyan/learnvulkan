@@ -39,5 +39,6 @@ add_subdirectory(ThirdParty/glfw)
 setup_output_directories(glfw)
 
 add_subdirectory(TestThirdParty)
+add_subdirectory(HelloTriangle)
 
 # add_subdirectory(Common)
