@@ -38,7 +38,11 @@ private:
     void createInstance();
     void cleanup();
     bool checkValidationLayerSupport();
+    std::vector<const char*> getRequiredExtensions();
+    void setupDebugMessenger();
+    void populateDebugMessengerCreateInfo(VkDebugUtilsMessengerCreateInfoEXT& createInfo);
 private:
     VkInstance instance;
     GLFWwindow* window;
+    VkDebugUtilsMessengerEXT debugMessenger;
 };
