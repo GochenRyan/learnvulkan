@@ -46,14 +46,21 @@ private:
     bool checkValidationLayerSupport();
     std::vector<const char*> getRequiredExtensions();
     void setupDebugMessenger();
+
+    void pickPhysicalDevice();
+    uint32_t findQueueFamilies();
+
+    void createLogicalDevice();
+
+    void createSurface();
 private:
-    GLFWwindow* window = nullptr;
+    GLFWwindow* window{ nullptr };
 
     vk::raii::Context  context;
-    vk::raii::Instance instance = nullptr;
-    vk::raii::DebugUtilsMessengerEXT debugMessenger = nullptr;
+    vk::raii::Instance instance{ nullptr };
+    vk::raii::DebugUtilsMessengerEXT debugMessenger{ nullptr };
 
-    vk::raii::PhysicalDevice physicalDevice = nullptr;
+    vk::raii::PhysicalDevice physicalDevice{ nullptr };
 
     std::vector<const char*> requiredDeviceExtension = {
         vk::KHRSwapchainExtensionName,  // It provides the capability of "swapchain" for Vulkan applications - that is, on top of the Window System Integration (WSI), to implement the process of rendering images to the screen
@@ -61,4 +68,17 @@ private:
         vk::KHRSynchronization2ExtensionName,  // It provides a new generation of Vulkan synchronization API, simplifying and unifying the use of synchronization primitives such as command buffers, pipeline barriers, events, and semaphores
         vk::KHRCreateRenderpass2ExtensionName  // The creation interface for "Render Pass" has been expanded and improved, allowing you to specify more abundant subpass dependencies and attachment state transitions at one time during creation.
     };
+
+    std::vector<const char*> deviceExtensions = {
+        vk::KHRSwapchainExtensionName,
+        vk::KHRSpirv14ExtensionName,
+        vk::KHRSynchronization2ExtensionName,
+        vk::KHRCreateRenderpass2ExtensionName
+    };
+
+    vk::raii::Device device{ nullptr };
+    vk::raii::Queue queue{ nullptr };
+
+    // KHR: Khronos
+    vk::raii::SurfaceKHR surface{ nullptr };
 };
