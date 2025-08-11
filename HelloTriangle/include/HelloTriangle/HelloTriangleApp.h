@@ -53,6 +53,9 @@ private:
     void createLogicalDevice();
 
     void createSurface();
+
+    vk::Extent2D chooseSwapExtent(const vk::SurfaceCapabilitiesKHR& capabilities);
+    void createSwapChain();
 private:
     GLFWwindow* window{ nullptr };
 
@@ -62,18 +65,11 @@ private:
 
     vk::raii::PhysicalDevice physicalDevice{ nullptr };
 
-    std::vector<const char*> requiredDeviceExtension = {
+    std::vector<const char*> deviceExtensions = {
         vk::KHRSwapchainExtensionName,  // It provides the capability of "swapchain" for Vulkan applications - that is, on top of the Window System Integration (WSI), to implement the process of rendering images to the screen
         vk::KHRSpirv14ExtensionName,  // Allow the Vulkan driver to directly accept the shader Intermediate Language of version SPIR-V 1.4. SPIR-V is the shader binary format used by Vulkan (as well as OpenCL).
         vk::KHRSynchronization2ExtensionName,  // It provides a new generation of Vulkan synchronization API, simplifying and unifying the use of synchronization primitives such as command buffers, pipeline barriers, events, and semaphores
         vk::KHRCreateRenderpass2ExtensionName  // The creation interface for "Render Pass" has been expanded and improved, allowing you to specify more abundant subpass dependencies and attachment state transitions at one time during creation.
-    };
-
-    std::vector<const char*> deviceExtensions = {
-        vk::KHRSwapchainExtensionName,
-        vk::KHRSpirv14ExtensionName,
-        vk::KHRSynchronization2ExtensionName,
-        vk::KHRCreateRenderpass2ExtensionName
     };
 
     vk::raii::Device device{ nullptr };
@@ -81,4 +77,6 @@ private:
 
     // KHR: Khronos
     vk::raii::SurfaceKHR surface{ nullptr };
+    vk::SurfaceFormatKHR swapChainSurfaceFormat;
+    vk::Extent2D swapChainExtent;
 };

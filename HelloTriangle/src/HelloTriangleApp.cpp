@@ -10,6 +10,66 @@ static VKAPI_ATTR vk::Bool32 VKAPI_CALL debugCallback(vk::DebugUtilsMessageSever
     return vk::False;
 }
 
+/*
+    Choosing the right settings for the swap chain:
+        - Surface format (color depth)
+        - Presentation mode (conditions for "swapping" images to the screen)
+        - Swap extent (resolution of images in swapchain)
+*/
+
+static vk::SurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<vk::SurfaceFormatKHR>& availableFormats)
+{
+    for (const auto& avaliableFormat : availableFormats)
+    {
+        if (avaliableFormat.format == vk::Format::eB8G8R8A8Srgb && avaliableFormat.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear)
+        {
+            return avaliableFormat;
+        }
+    }
+
+    return availableFormats[0];
+}
+
+static vk::PresentModeKHR chooseSwapPresentMode(const std::vector<vk::PresentModeKHR>& availablePresentModes)
+{
+    /*
+        VK_PRESENT_MODE_MAILBOX_KHR is a very nice trade-off if energy usage is not a concern.
+        It allows us to avoid tearing while still maintaining fairly low latency by rendering new images
+        that are as up to date as possible right until the vertical blank. On **mobile devices**,
+        where **energy usage** is more important, you will probably want to use VK_PRESENT_MODE_FIFO_KHR instead.
+    */
+    for (const auto& availablePresentMode : availablePresentModes) {
+        if (availablePresentMode == vk::PresentModeKHR::eMailbox) {
+            return availablePresentMode;
+        }
+    }
+    return vk::PresentModeKHR::eFifo;
+}
+
+vk::Extent2D HelloTriangleApp::chooseSwapExtent(const vk::SurfaceCapabilitiesKHR& capabilities)
+{
+    if (capabilities.currentExtent.width != std::numeric_limits<uint32_t>::max())
+    {
+        return capabilities.currentExtent;
+    }
+
+    int width, height;
+    glfwGetFramebufferSize(window, &width, &height);
+    return {
+        std::clamp<uint32_t>(width, capabilities.minImageExtent.width, capabilities.maxImageExtent.width),
+        std::clamp<uint32_t>(height, capabilities.minImageExtent.height, capabilities.maxImageExtent.height)
+    };
+}
+
+void HelloTriangleApp::createSwapChain()
+{
+    auto surfaceCapabilities = physicalDevice.getSurfaceCapabilitiesKHR(surface);
+    swapChainSurfaceFormat = chooseSwapSurfaceFormat(physicalDevice.getSurfaceFormatsKHR(surface));
+    swapChainExtent = chooseSwapExtent(surfaceCapabilities);
+    auto minImageCount = std::max(3u, surfaceCapabilities.minImageCount);
+    minImageCount = (surfaceCapabilities.maxImageCount > 0 && minImageCount > surfaceCapabilities.maxImageCount) ? surfaceCapabilities.maxImageCount : minImageCount;
+}
+
 void HelloTriangleApp::Run()
 {
     initWindow();
@@ -180,7 +240,7 @@ void HelloTriangleApp::pickPhysicalDevice()
             
             bool supportsAllRequiredExtensions = true;
             auto extensions = device.enumerateDeviceExtensionProperties();
-            for (auto const& extension : requiredDeviceExtension) {
+            for (auto const& extension : deviceExtensions) {
                 auto extensionIter = std::ranges::find_if(extensions, [extension](auto const& ext) {return strcmp(ext.extensionName, extension) == 0; });
                 supportsAllRequiredExtensions = supportsAllRequiredExtensions && extensionIter != extensions.end();
             }
