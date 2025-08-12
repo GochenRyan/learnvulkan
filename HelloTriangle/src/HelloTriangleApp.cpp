@@ -17,17 +17,14 @@ static VKAPI_ATTR vk::Bool32 VKAPI_CALL debugCallback(vk::DebugUtilsMessageSever
         - Swap extent (resolution of images in swapchain)
 */
 
-static vk::SurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<vk::SurfaceFormatKHR>& availableFormats)
+static vk::Format chooseSwapSurfaceFormat(const std::vector<vk::SurfaceFormatKHR>& availableFormats)
 {
-    for (const auto& avaliableFormat : availableFormats)
-    {
-        if (avaliableFormat.format == vk::Format::eB8G8R8A8Srgb && avaliableFormat.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear)
-        {
-            return avaliableFormat;
-        }
-    }
-
-    return availableFormats[0];
+    const auto formatIt = std::ranges::find_if(availableFormats,
+        [](const auto& format) {
+            return format.format == vk::Format::eB8G8R8A8Srgb &&
+                format.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear;
+        });
+    return formatIt != availableFormats.end() ? formatIt->format : availableFormats[0].format;
 }
 
 static vk::PresentModeKHR chooseSwapPresentMode(const std::vector<vk::PresentModeKHR>& availablePresentModes)
@@ -48,13 +45,22 @@ static vk::PresentModeKHR chooseSwapPresentMode(const std::vector<vk::PresentMod
 
 vk::Extent2D HelloTriangleApp::chooseSwapExtent(const vk::SurfaceCapabilitiesKHR& capabilities)
 {
+    /*
+        At this point, the device has already specified the optimal switching chain resolution 
+        (for example, the recommended resolution of the screen), and no further adjustment is required
+    */
     if (capabilities.currentExtent.width != std::numeric_limits<uint32_t>::max())
     {
         return capabilities.currentExtent;
     }
 
     int width, height;
-    glfwGetFramebufferSize(window, &width, &height);
+    glfwGetFramebufferSize(window, &width, &height);  // Obtain the physical pixel size of the window (in pixels)
+
+    /*
+        Ensure that the resolution conforms to the minimum and maximum pixel range 
+        supported by the device to avoid errors caused by exceeding the hardware limit
+    */
     return {
         std::clamp<uint32_t>(width, capabilities.minImageExtent.width, capabilities.maxImageExtent.width),
         std::clamp<uint32_t>(height, capabilities.minImageExtent.height, capabilities.maxImageExtent.height)
@@ -64,10 +70,27 @@ vk::Extent2D HelloTriangleApp::chooseSwapExtent(const vk::SurfaceCapabilitiesKHR
 void HelloTriangleApp::createSwapChain()
 {
     auto surfaceCapabilities = physicalDevice.getSurfaceCapabilitiesKHR(surface);
-    swapChainSurfaceFormat = chooseSwapSurfaceFormat(physicalDevice.getSurfaceFormatsKHR(surface));
+    swapChainImageFormat = chooseSwapSurfaceFormat(physicalDevice.getSurfaceFormatsKHR(surface));
     swapChainExtent = chooseSwapExtent(surfaceCapabilities);
     auto minImageCount = std::max(3u, surfaceCapabilities.minImageCount);
     minImageCount = (surfaceCapabilities.maxImageCount > 0 && minImageCount > surfaceCapabilities.maxImageCount) ? surfaceCapabilities.maxImageCount : minImageCount;
+    vk::SwapchainCreateInfoKHR SwapchainCreateInfo{
+        .surface = surface,
+        .minImageCount = minImageCount,
+        .imageFormat = swapChainImageFormat,
+        .imageColorSpace = vk::ColorSpaceKHR::eSrgbNonlinear,
+        .imageExtent = swapChainExtent,
+        .imageArrayLayers = 1,
+        .imageUsage = vk::ImageUsageFlagBits::eColorAttachment,
+        .imageSharingMode = vk::SharingMode::eExclusive,
+        .preTransform = surfaceCapabilities.currentTransform,
+        .compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque,
+        .presentMode = chooseSwapPresentMode(physicalDevice.getSurfacePresentModesKHR(surface)),
+        .clipped = true
+    };
+
+    swapChain = vk::raii::SwapchainKHR(device, SwapchainCreateInfo);
+    swapChainImages = swapChain.getImages();
 }
 
 void HelloTriangleApp::Run()

@@ -77,6 +77,9 @@ private:
 
     // KHR: Khronos
     vk::raii::SurfaceKHR surface{ nullptr };
-    vk::SurfaceFormatKHR swapChainSurfaceFormat;
+    vk::Format swapChainImageFormat;
     vk::Extent2D swapChainExtent;
+
+    vk::raii::SwapchainKHR swapChain = nullptr;
+    std::vector<vk::Image> swapChainImages;
 };
