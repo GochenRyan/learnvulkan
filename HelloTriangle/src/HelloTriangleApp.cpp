@@ -80,6 +80,12 @@ void HelloTriangleApp::createSwapChain()
         .imageFormat = swapChainImageFormat,
         .imageColorSpace = vk::ColorSpaceKHR::eSrgbNonlinear,
         .imageExtent = swapChainExtent,
+
+        /*
+            The "Layer" (also known as "Array Layer") of an Image refers to different layers within an image array, 
+            used to represent multiple independent images (such as the six faces of a cube map or multiple elements of a texture array).
+        */
+
         .imageArrayLayers = 1,
         .imageUsage = vk::ImageUsageFlagBits::eColorAttachment,
         .imageSharingMode = vk::SharingMode::eExclusive,
@@ -91,6 +97,37 @@ void HelloTriangleApp::createSwapChain()
 
     swapChain = vk::raii::SwapchainKHR(device, SwapchainCreateInfo);
     swapChainImages = swapChain.getImages();
+}
+
+void HelloTriangleApp::createImageViews()
+{
+    swapChainImageViews.clear();
+
+    /*
+        createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+        createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+        createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+        createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+
+        Each component (r, g, b, a) in the components field specifies the mapping method of the image color channel.
+        VK_COMPONENT_SWIZZLE_IDENTITY indicates no swapping, that is, the red channel remains red, the green channel remains green, and so on.
+        Vulkan allows the order of image channels to be adjusted through component swapping (Swizzle) without modifying the image data itself. This is very useful in the following scenarios:
+            Format mismatch: When the image format does not match the channel order expected by the shader (for example, the image is stored as BGR, but the shader expects RGB).
+            Monochrome channel: Map multiple channels to the same value (for example, set the Alpha channel as the red channel).
+            Simplify data processing: Avoid preprocessing image data on the CPU side.
+    */
+
+    vk::ImageViewCreateInfo imageViewCreateInfo{
+        .viewType = vk::ImageViewType::e2D,
+        .format = swapChainImageFormat,
+        .subresourceRange = { vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1 }
+    };
+
+    for (auto image : swapChainImages)
+    {
+        imageViewCreateInfo.image = image;
+        swapChainImageViews.emplace_back(device, imageViewCreateInfo);
+    }
 }
 
 void HelloTriangleApp::Run()
@@ -116,6 +153,8 @@ void HelloTriangleApp::initVulkan()
     createSurface();
     pickPhysicalDevice();
     createLogicalDevice();
+    createSwapChain();
+    createImageViews();
 }
 
 void HelloTriangleApp::mainLoop()
