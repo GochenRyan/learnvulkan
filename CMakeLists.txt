@@ -34,6 +34,11 @@ if (${Vulkan_FOUND})
     copy_specified_files_to_build(FILES ${Vulkan_LIBRARY})
 endif()
 
+# Assets
+set(ASSETS_SRC_DIR "${CMAKE_SOURCE_DIR}/Assets")
+file(COPY ${ASSETS_SRC_DIR} DESTINATION ${CMAKE_BINARY_DIR})
+
+# Project
 set(BUILD_SHARED_LIBS ON)
 add_subdirectory(ThirdParty/glfw)
 setup_output_directories(glfw)

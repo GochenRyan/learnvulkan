@@ -1,6 +1,8 @@
 #include <HelloTriangle/HelloTriangleApp.h>
 #include <iostream>
 #include <stdexcept>
+#include <fstream>
+#include <format>
 
 static VKAPI_ATTR vk::Bool32 VKAPI_CALL debugCallback(vk::DebugUtilsMessageSeverityFlagBitsEXT severity, vk::DebugUtilsMessageTypeFlagsEXT type, const vk::DebugUtilsMessengerCallbackDataEXT* pCallbackData, void*) {
     if (severity == vk::DebugUtilsMessageSeverityFlagBitsEXT::eError || severity == vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning) {
@@ -155,6 +157,7 @@ void HelloTriangleApp::initVulkan()
     createLogicalDevice();
     createSwapChain();
     createImageViews();
+    createGraphicPipeline();
 }
 
 void HelloTriangleApp::mainLoop()
@@ -413,4 +416,65 @@ void HelloTriangleApp::createSurface()
         throw std::runtime_error("failed to create window surface!");
     }
     surface = vk::raii::SurfaceKHR(instance, _surface);
+}
+
+void HelloTriangleApp::createGraphicPipeline()
+{
+    auto shaderCode = readFile("Assets/Shader/HelloTriangle/slang.spv");
+    vk::raii::ShaderModule shaderModule = createShaderModule(shaderCode);
+
+    /*
+        pSpecializationInfo:
+            allows you to specify values for shader constants. You can use a single shader module 
+            where its behavior can be configured in pipeline creation by specifying different values for the constants used in it. 
+            This is more efficient than configuring the shader using variables at render time, 
+            because the compiler can do optimizations like eliminating if statements that depend on these values. 
+    */
+    vk::PipelineShaderStageCreateInfo vertShaderStageInfo{
+        .stage = vk::ShaderStageFlagBits::eVertex,
+        .module = shaderModule,
+        .pName = "vertMain"
+    };
+
+    vk::PipelineShaderStageCreateInfo fragShaderStageInfo{
+        .stage = vk::ShaderStageFlagBits::eFragment,
+        .module = shaderModule,
+        .pName = "fragMain"
+    };
+
+    vk::PipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo , fragShaderStageInfo };
+}
+
+std::vector<char> HelloTriangleApp::readFile(std::string_view filePath)
+{
+    // ate: Start reading at the end of the file
+    // binary: Read the file as a binary file (avoid text transformations)
+    std::ifstream file(filePath.data(), std::ios::ate | std::ios::binary);
+    
+    if (!file.is_open())
+    {
+        throw std::runtime_error(std::format("failed to open file : {0}", filePath));
+    }
+
+    // The advantage of starting to read at the end of the file is that we can use the read position to determine the size of the file and allocate a buffer
+    std::vector<char> buffer(file.tellg());
+
+    file.seekg(0, std::ios::beg);
+    file.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+
+    file.close();
+
+    return buffer;
+}
+
+vk::raii::ShaderModule HelloTriangleApp::createShaderModule(const std::vector<char>& code) const
+{
+    vk::ShaderModuleCreateInfo createInfo{
+        .codeSize = code.size() * sizeof(char),
+        .pCode = reinterpret_cast<const uint32_t*>(code.data())
+    };
+
+    vk::raii::ShaderModule shaderModule{ device, createInfo };
+
+    return shaderModule;
 }

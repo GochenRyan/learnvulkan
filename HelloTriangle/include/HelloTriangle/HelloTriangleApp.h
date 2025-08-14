@@ -58,6 +58,11 @@ private:
     void createSwapChain();
 
     void createImageViews();
+
+    void createGraphicPipeline();
+
+    std::vector<char> readFile(std::string_view filePath);
+    [[nodiscard]] vk::raii::ShaderModule createShaderModule(const std::vector<char>& code) const;
 private:
     GLFWwindow* window{ nullptr };
 
