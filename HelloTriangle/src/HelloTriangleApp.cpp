@@ -443,6 +443,113 @@ void HelloTriangleApp::createGraphicPipeline()
     };
 
     vk::PipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo , fragShaderStageInfo };
+
+    /*
+        The former is specified in the topology member and can have values like:
+            VK_PRIMITIVE_TOPOLOGY_POINT_LIST: points from vertices
+            VK_PRIMITIVE_TOPOLOGY_LINE_LIST: line from every two vertices without reuse
+            VK_PRIMITIVE_TOPOLOGY_LINE_STRIP: the end vertex of every line is used as start vertex for the next line
+            VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST: triangle from every three vertices without reuse
+            VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP: the second and third vertex of every triangle is used as first two vertices of the next triangle
+    */
+    vk::PipelineInputAssemblyStateCreateInfo inputAssembly{
+        .topology = vk::PrimitiveTopology::eTriangleList
+    };
+
+    /*vk::Viewport viewport{
+        .x = 0,
+        .y = 0,
+        .width = static_cast<float>(swapChainExtent.width),
+        .height = static_cast<float>(swapChainExtent.height),
+        .minDepth = 0,
+        .maxDepth = 1
+    };*/
+
+    std::vector<vk::DynamicState> dynamicStates = {
+        vk::DynamicState::eViewport,
+        vk::DynamicState::eScissor
+    };
+    vk::PipelineDynamicStateCreateInfo dynamicStateInfo{
+        .dynamicStateCount = static_cast<uint32_t>(dynamicStates.size()),
+        .pDynamicStates = dynamicStates.data()
+    };
+
+    vk::PipelineViewportStateCreateInfo viewportStateInfo{ .viewportCount = 1, .scissorCount = 1 };
+
+    vk::PipelineRasterizationStateCreateInfo rasterizerInfo{
+        .depthClampEnable = vk::False,
+        .rasterizerDiscardEnable = vk::False,
+        .polygonMode = vk::PolygonMode::eFill,
+        .cullMode = vk::CullModeFlagBits::eBack,
+        .frontFace = vk::FrontFace::eClockwise
+
+    };
+
+    vk::PipelineMultisampleStateCreateInfo multisamplingInfo{
+        .rasterizationSamples = vk::SampleCountFlagBits::e1, 
+        .sampleShadingEnable = vk::False 
+    };
+
+    vk::PipelineColorBlendAttachmentState colorBlendAttachment{
+        .blendEnable = vk::False,
+        .srcColorBlendFactor = vk::BlendFactor::eSrcAlpha,
+        .dstColorBlendFactor = vk::BlendFactor::eOneMinusSrcAlpha,
+        .colorBlendOp = vk::BlendOp::eAdd,
+        .srcAlphaBlendFactor = vk::BlendFactor::eOne,
+        .dstAlphaBlendFactor = vk::BlendFactor::eZero,
+        .alphaBlendOp = vk::BlendOp::eAdd,
+        .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA,
+    };
+    vk::PipelineColorBlendStateCreateInfo colorBlendingInfo{ 
+        .logicOpEnable = vk::False, 
+        .logicOp = vk::LogicOp::eCopy, 
+        .attachmentCount = 1, 
+        .pAttachments = &colorBlendAttachment };
+
+    /*
+        Uniform values need to be specified during pipeline creation by creating a VkPipelineLayout object. 
+        Even though we won’t be using them until a future chapter, we are still required to create an empty pipeline layout.
+    */
+    vk::PipelineLayoutCreateInfo pipelineLayoutInfo{ .setLayoutCount = 0, .pushConstantRangeCount = 0 };
+    pipelineLayout = vk::raii::PipelineLayout(device, pipelineLayoutInfo);
+
+    vk::PipelineRenderingCreateInfo pipelineRenderingInfo{
+        .colorAttachmentCount = 1,
+        .pColorAttachmentFormats = &swapChainImageFormat
+    };
+
+    /*
+        Note that we’re using dynamic rendering instead of a traditional render pass, 
+        so we set the renderPass parameter to nullptr and include a vk::PipelineRenderingCreateInfo structure in the pNext chain. 
+        This structure specifies the formats of the attachments that will be used during rendering.
+    */
+    vk::GraphicsPipelineCreateInfo pipelineInfo{
+        .pNext = &pipelineRenderingInfo,
+        .stageCount = 2,
+        .pStages = shaderStages,
+        .pVertexInputState = &vertexInputInfo,
+        .pInputAssemblyState = &inputAssembly,
+        .pViewportState = &viewportStateInfo,
+        .pRasterizationState = &rasterizerInfo,
+        .pMultisampleState = &multisamplingInfo,
+        .pColorBlendState = &colorBlendingInfo,
+        .pDynamicState = &dynamicStateInfo,
+        .layout = pipelineLayout,
+        /*
+            Set to nullptr because we’re using dynamic rendering instead of a traditional render pass.
+        */
+        .renderPass = nullptr,
+        /*
+             Vulkan allows you to create a new graphics pipeline by deriving from an existing pipeline. 
+             The idea of pipeline derivatives is that it is less expensive to set up pipelines 
+             when they have much functionality in common with an existing pipeline and switching between pipelines from the same parent can also be done quicker. 
+             You can either specify the handle of an existing pipeline with basePipelineHandle or reference another pipeline that is about to be created by index with basePipelineIndex.
+        */
+        .basePipelineHandle = VK_NULL_HANDLE,
+        .basePipelineIndex = -1
+    };
+
+    graphicPipeline = vk::raii::Pipeline(device, nullptr, pipelineInfo);
 }
 
 std::vector<char> HelloTriangleApp::readFile(std::string_view filePath)

@@ -91,4 +91,10 @@ private:
     std::vector<vk::Image> swapChainImages;
 
     std::vector<vk::raii::ImageView> swapChainImageViews;
+
+    vk::PipelineVertexInputStateCreateInfo vertexInputInfo;
+
+    vk::PipelineLayout pipelineLayout = nullptr;
+
+    vk::raii::Pipeline graphicPipeline = nullptr;
 };
