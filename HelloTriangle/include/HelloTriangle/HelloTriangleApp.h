@@ -48,7 +48,6 @@ private:
     void setupDebugMessenger();
 
     void pickPhysicalDevice();
-    uint32_t findQueueFamilies();
 
     void createLogicalDevice();
 
@@ -63,6 +62,14 @@ private:
 
     std::vector<char> readFile(std::string_view filePath);
     [[nodiscard]] vk::raii::ShaderModule createShaderModule(const std::vector<char>& code) const;
+
+    void createCommandPool();
+    void createCommandBuffer();
+    void recordCommandBuffer(uint32_t imageIndex);
+    void transition_image_layout(uint32_t imageIndex, vk::ImageLayout oldLayout, vk::ImageLayout newLayout, vk::AccessFlags2 srcAccessMask, vk::AccessFlags2 dstAccessMask, vk::PipelineStageFlags2 srcStageMask, vk::PipelineStageFlags2 dstStageMask);
+
+    void drawFrame();
+    void createSyncObjects();
 private:
     GLFWwindow* window{ nullptr };
 
@@ -72,7 +79,7 @@ private:
 
     vk::raii::PhysicalDevice physicalDevice{ nullptr };
 
-    std::vector<const char*> deviceExtensions = {
+    std::vector<const char*> requiredDeviceExtension = {
         vk::KHRSwapchainExtensionName,  // It provides the capability of "swapchain" for Vulkan applications - that is, on top of the Window System Integration (WSI), to implement the process of rendering images to the screen
         vk::KHRSpirv14ExtensionName,  // Allow the Vulkan driver to directly accept the shader Intermediate Language of version SPIR-V 1.4. SPIR-V is the shader binary format used by Vulkan (as well as OpenCL).
         vk::KHRSynchronization2ExtensionName,  // It provides a new generation of Vulkan synchronization API, simplifying and unifying the use of synchronization primitives such as command buffers, pipeline barriers, events, and semaphores
@@ -92,9 +99,16 @@ private:
 
     std::vector<vk::raii::ImageView> swapChainImageViews;
 
-    vk::PipelineVertexInputStateCreateInfo vertexInputInfo;
-
     vk::PipelineLayout pipelineLayout = nullptr;
 
-    vk::raii::Pipeline graphicPipeline = nullptr;
+    vk::raii::Pipeline graphicsPipeline = nullptr;
+
+    vk::raii::CommandPool commandPool = nullptr;
+    vk::raii::CommandBuffer commandBuffer = nullptr;
+
+    vk::raii::Semaphore presentCompleteSemaphore = nullptr;
+    vk::raii::Semaphore renderFinishedSemaphore = nullptr;
+    vk::raii::Fence drawFence = nullptr;
+
+    uint32_t queueIndex = ~0;
 };

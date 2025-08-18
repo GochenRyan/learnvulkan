@@ -158,6 +158,9 @@ void HelloTriangleApp::initVulkan()
     createSwapChain();
     createImageViews();
     createGraphicPipeline();
+    createCommandPool();
+    createCommandBuffer();
+    createSyncObjects();
 }
 
 void HelloTriangleApp::mainLoop()
@@ -165,7 +168,17 @@ void HelloTriangleApp::mainLoop()
     while (!glfwWindowShouldClose(window))
     {
         glfwPollEvents();
+        drawFrame();
     }
+
+    device.waitIdle();
+}
+
+void HelloTriangleApp::cleanup()
+{
+    glfwDestroyWindow(window);
+
+    glfwTerminate();
 }
 
 void HelloTriangleApp::createInstance()
@@ -251,13 +264,6 @@ std::vector<const char *> HelloTriangleApp::getRequiredExtensions()
     return extensions;
 }
 
-void HelloTriangleApp::cleanup()
-{
-    glfwDestroyWindow(window);
-
-    glfwTerminate();
-}
-
 bool HelloTriangleApp::checkValidationLayerSupport()
 {
     uint32_t layerCount;
@@ -292,55 +298,50 @@ bool HelloTriangleApp::checkValidationLayerSupport()
 void HelloTriangleApp::pickPhysicalDevice()
 {
     std::vector<vk::raii::PhysicalDevice> devices = instance.enumeratePhysicalDevices();
-    const auto devIter = std::ranges::find_if(devices,
-        [&](auto const& device) {
-            auto queueFamilies = device.getQueueFamilyProperties();
+    const auto                            devIter = std::ranges::find_if(
+        devices,
+        [&](auto const& device)
+        {
+            // Check if the device supports the Vulkan 1.3 API version
             bool supportsVulkan1_3 = device.getProperties().apiVersion >= VK_API_VERSION_1_3;
-            
-            const auto qfpIter = std::ranges::find_if(queueFamilies,
-                [](vk::QueueFamilyProperties const& qfp) {
-                    return (qfp.queueFlags & vk::QueueFlagBits::eGraphics) != static_cast<vk::QueueFlags>(0);
-                });
-            bool supportsGraphics = qfpIter != queueFamilies.end();
-            
-            bool supportsAllRequiredExtensions = true;
-            auto extensions = device.enumerateDeviceExtensionProperties();
-            for (auto const& extension : deviceExtensions) {
-                auto extensionIter = std::ranges::find_if(extensions, [extension](auto const& ext) {return strcmp(ext.extensionName, extension) == 0; });
-                supportsAllRequiredExtensions = supportsAllRequiredExtensions && extensionIter != extensions.end();
-            }
 
-            /*
-                Why needs .template?
-                tell compiler '<' is start 
+            // Check if any of the queue families support graphics operations
+            auto queueFamilies = device.getQueueFamilyProperties();
+            bool supportsGraphics =
+                std::ranges::any_of(queueFamilies, [](auto const& qfp) { return !!(qfp.queueFlags & vk::QueueFlagBits::eGraphics); });
 
-                vk::PhysicalDeviceVulkan13Features::dynamicRendering:
-                    It allows you to directly use dynamic rendering in the command buffer - that is, you can directly specify the rendering target and subpass without having to pre-write a RenderPass in the pipeline.
-                
-                vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT::extendedDynamicState
-                    To transform more pipeline states (such as rasterization mode, mixed state, depth/template state, etc.) into "dynamic" states, you can vkCmdSet* during drawing instead of fixing them when the pipeline is created
-            */
+            // Check if all required device extensions are available
+            auto availableDeviceExtensions = device.enumerateDeviceExtensionProperties();
+            bool supportsAllRequiredExtensions =
+                std::ranges::all_of(requiredDeviceExtension,
+                    [&availableDeviceExtensions](auto const& requiredDeviceExtension)
+                    {
+                        return std::ranges::any_of(availableDeviceExtensions,
+                            [requiredDeviceExtension](auto const& availableDeviceExtension)
+                            { return strcmp(availableDeviceExtension.extensionName, requiredDeviceExtension) == 0; });
+                    });
+
             auto features = device.template getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan13Features, vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>();
             bool supportsRequiredFeatures = features.template get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering &&
                 features.template get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>().extendedDynamicState;
 
             return supportsVulkan1_3 && supportsGraphics && supportsAllRequiredExtensions && supportsRequiredFeatures;
         });
-    if (devIter == devices.end()) {
-        throw std::runtime_error("failed to find a suitable GPU!");
-    }
-    else
+    if (devIter != devices.end())
     {
         physicalDevice = *devIter;
     }
+    else
+    {
+        throw std::runtime_error("failed to find a suitable GPU!");
+    }
 }
 
-uint32_t HelloTriangleApp::findQueueFamilies()
+void HelloTriangleApp::createLogicalDevice()
 {
     std::vector<vk::QueueFamilyProperties> queueFamilyProperties = physicalDevice.getQueueFamilyProperties();
 
     // get the first index into queueFamilyProperties which supports both graphics and present
-    uint32_t queueIndex = ~0;
     for (uint32_t qfpIndex = 0; qfpIndex < queueFamilyProperties.size(); qfpIndex++)
     {
         if ((queueFamilyProperties[qfpIndex].queueFlags & vk::QueueFlagBits::eGraphics) &&
@@ -356,36 +357,21 @@ uint32_t HelloTriangleApp::findQueueFamilies()
         throw std::runtime_error("Could not find a queue for graphics and present -> terminating");
     }
 
-    return queueIndex;
-}
-
-void HelloTriangleApp::createLogicalDevice()
-{
-    auto queueIndex = findQueueFamilies();
-
-    float queuePriority = 0.0f;
-    vk::DeviceQueueCreateInfo deviceQueueCreateInfo{ .queueFamilyIndex = queueIndex , .queueCount = 1, .pQueuePriorities = &queuePriority };
-
-
+    // query for Vulkan 1.3 features
     vk::StructureChain<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan13Features, vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT> featureChain = {
-        {},                               // vk::PhysicalDeviceFeatures2 (empty for now)
-        {.dynamicRendering = true },      // Enable dynamic rendering from Vulkan 1.3
-        {.extendedDynamicState = true }   // Enable extended dynamic state from the extension
+        {},                                                     // vk::PhysicalDeviceFeatures2
+        {.synchronization2 = true, .dynamicRendering = true },  // vk::PhysicalDeviceVulkan13Features
+        {.extendedDynamicState = true }                         // vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT
     };
 
-    vk::DeviceCreateInfo deviceCreateInfo{
-        .pNext = &featureChain.get<vk::PhysicalDeviceFeatures2>(),
-        .queueCreateInfoCount = 1,
-        .pQueueCreateInfos = &deviceQueueCreateInfo,
-        .enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size()),
-        .ppEnabledExtensionNames = deviceExtensions.data()
-    };
-
-    /*
-        Each queue family has a fixed number of available queues:
-            const auto& grahicsFromProps = queueFamilyProperties[graphicsIndex];
-            uint32_t maxQueues = grahicsFromProps.queueCount;
-    */
+    // create a Device
+    float                     queuePriority = 0.0f;
+    vk::DeviceQueueCreateInfo deviceQueueCreateInfo{ .queueFamilyIndex = queueIndex, .queueCount = 1, .pQueuePriorities = &queuePriority };
+    vk::DeviceCreateInfo      deviceCreateInfo{ .pNext = &featureChain.get<vk::PhysicalDeviceFeatures2>(),
+                                                .queueCreateInfoCount = 1,
+                                                .pQueueCreateInfos = &deviceQueueCreateInfo,
+                                                .enabledExtensionCount = static_cast<uint32_t>(requiredDeviceExtension.size()),
+                                                .ppEnabledExtensionNames = requiredDeviceExtension.data() };
 
     device = vk::raii::Device(physicalDevice, deviceCreateInfo);
     queue = vk::raii::Queue(device, queueIndex, 0);
@@ -420,7 +406,8 @@ void HelloTriangleApp::createSurface()
 
 void HelloTriangleApp::createGraphicPipeline()
 {
-    auto shaderCode = readFile("Assets/Shader/HelloTriangle/slang.spv");
+    //auto shaderCode = readFile("Assets/Shader/HelloTriangle/slang.spv");
+    auto shaderCode = readFile(ASSETS_SRC_DIR "/Shader/HelloTriangle/slang.spv");
     vk::raii::ShaderModule shaderModule = createShaderModule(shaderCode);
 
     /*
@@ -444,6 +431,7 @@ void HelloTriangleApp::createGraphicPipeline()
 
     vk::PipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo , fragShaderStageInfo };
 
+    vk::PipelineVertexInputStateCreateInfo vertexInputInfo;
     /*
         The former is specified in the topology member and can have values like:
             VK_PRIMITIVE_TOPOLOGY_POINT_LIST: points from vertices
@@ -481,8 +469,10 @@ void HelloTriangleApp::createGraphicPipeline()
         .rasterizerDiscardEnable = vk::False,
         .polygonMode = vk::PolygonMode::eFill,
         .cullMode = vk::CullModeFlagBits::eBack,
-        .frontFace = vk::FrontFace::eClockwise
-
+        .frontFace = vk::FrontFace::eClockwise,
+        .depthBiasEnable = vk::False,
+        .depthBiasSlopeFactor = 1.0f,
+        .lineWidth = 1.0f
     };
 
     vk::PipelineMultisampleStateCreateInfo multisamplingInfo{
@@ -508,7 +498,7 @@ void HelloTriangleApp::createGraphicPipeline()
 
     /*
         Uniform values need to be specified during pipeline creation by creating a VkPipelineLayout object. 
-        Even though we won’t be using them until a future chapter, we are still required to create an empty pipeline layout.
+        Even though we won’t be using them now, we are still required to create an empty pipeline layout.
     */
     vk::PipelineLayoutCreateInfo pipelineLayoutInfo{ .setLayoutCount = 0, .pushConstantRangeCount = 0 };
     pipelineLayout = vk::raii::PipelineLayout(device, pipelineLayoutInfo);
@@ -549,7 +539,7 @@ void HelloTriangleApp::createGraphicPipeline()
         .basePipelineIndex = -1
     };
 
-    graphicPipeline = vk::raii::Pipeline(device, nullptr, pipelineInfo);
+    graphicsPipeline = vk::raii::Pipeline(device, nullptr, pipelineInfo);
 }
 
 std::vector<char> HelloTriangleApp::readFile(std::string_view filePath)
@@ -584,4 +574,211 @@ vk::raii::ShaderModule HelloTriangleApp::createShaderModule(const std::vector<ch
     vk::raii::ShaderModule shaderModule{ device, createInfo };
 
     return shaderModule;
+}
+
+void HelloTriangleApp::createCommandPool()
+{
+    vk::CommandPoolCreateInfo poolInfo{
+        /*
+            eTransient(VK_COMMAND_POOL_CREATE_TRANSIENT_BIT) : the command buffer in the command pool is for short-term use (with a short lifecycle) and will be released or reset shortly after use.
+                One-time commands (such as UI rendering per frame)
+            eResetCommandBuffer(VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT) : individual command buffers allocated from the command pool are allowed to be reset independently (via vkResetCommandBuffer()).
+                The command buffer needs to be frequently reused (such as recording commands once per frame)
+            eProtected(VK_COMMAND_POOL_CREATE_PROTECTED_BIT) : indicate that the command buffer in the command pool is a protected resource for handling sensitive data (such as encrypted content).
+        */
+        .flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
+        .queueFamilyIndex = queueIndex
+    };
+    commandPool = vk::raii::CommandPool(device, poolInfo);
+}
+
+void HelloTriangleApp::createCommandBuffer()
+{
+    vk::CommandBufferAllocateInfo allocInfo{
+        .commandPool = commandPool,
+        .level = vk::CommandBufferLevel::ePrimary,
+        .commandBufferCount = 1
+    };
+
+    commandBuffer = std::move(vk::raii::CommandBuffers(device, allocInfo).front());
+}
+
+void HelloTriangleApp::recordCommandBuffer(uint32_t imageIndex)
+{
+    commandBuffer.begin({});
+
+    transition_image_layout(
+        imageIndex,
+        vk::ImageLayout::eUndefined,
+        vk::ImageLayout::eColorAttachmentOptimal,
+        {},  // srcAccessMask (no need to wait for previous operations)
+        vk::AccessFlagBits2::eColorAttachmentWrite,
+        vk::PipelineStageFlagBits2::eTopOfPipe,
+        vk::PipelineStageFlagBits2::eColorAttachmentOutput
+    );
+
+    vk::ClearValue clearColor = vk::ClearColorValue(0.0f, 0.0f, 0.0f, 1.0f);
+    vk::RenderingAttachmentInfo attachmentInfo = {
+        .imageView = swapChainImageViews[imageIndex],
+        .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+        .loadOp = vk::AttachmentLoadOp::eClear,
+        .storeOp = vk::AttachmentStoreOp::eStore,
+        .clearValue = clearColor
+    };
+
+    vk::RenderingInfo renderingInfo = {
+        .renderArea = {.offset = { 0, 0 }, .extent = swapChainExtent },
+        .layerCount = 1,
+        .colorAttachmentCount = 1,
+        .pColorAttachments = &attachmentInfo
+    };
+
+    commandBuffer.beginRendering(renderingInfo);
+    commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *graphicsPipeline);
+    commandBuffer.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(swapChainExtent.width), static_cast<float>(swapChainExtent.height), 0.0f, 1.0f));
+    commandBuffer.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), swapChainExtent));
+    commandBuffer.draw(3, 1, 0, 0);
+
+    commandBuffer.endRendering();
+    
+    transition_image_layout(
+        imageIndex,
+        vk::ImageLayout::eColorAttachmentOptimal,
+        vk::ImageLayout::ePresentSrcKHR,
+        vk::AccessFlagBits2::eColorAttachmentWrite,
+        {},
+        vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+        vk::PipelineStageFlagBits2::eBottomOfPipe
+    );
+
+    commandBuffer.end();
+}
+
+void HelloTriangleApp::transition_image_layout(uint32_t imageIndex, vk::ImageLayout oldLayout, vk::ImageLayout newLayout, vk::AccessFlags2 srcAccessMask, vk::AccessFlags2 dstAccessMask, vk::PipelineStageFlags2 srcStageMask, vk::PipelineStageFlags2 dstStageMask)
+{
+    vk::ImageMemoryBarrier2 barrier = {
+        .srcStageMask = srcStageMask,
+        .srcAccessMask = srcAccessMask,
+        .dstStageMask = dstStageMask,
+        .dstAccessMask = dstAccessMask,
+        .oldLayout = oldLayout,
+        .newLayout = newLayout,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .image = swapChainImages[imageIndex],
+        .subresourceRange = {
+            .aspectMask = vk::ImageAspectFlagBits::eColor,
+            .baseMipLevel = 0,
+            .levelCount = 1,
+            .baseArrayLayer = 0,
+            .layerCount = 1
+        }
+    };
+    vk::DependencyInfo dependency_info = {
+            .dependencyFlags = {},
+            .imageMemoryBarrierCount = 1,
+            .pImageMemoryBarriers = &barrier
+    };
+    commandBuffer.pipelineBarrier2(dependency_info);
+}
+
+/*
+    Rendering a frame:
+        Wait for the previous frame to finish
+        Acquire an image from the swap chain
+        Record a command buffer which draws the scene onto that image
+        Submit the recorded command buffer
+        Present the swap chain image
+*/
+void HelloTriangleApp::drawFrame()
+{
+    queue.waitIdle();
+
+    auto [result, imageIndex] = swapChain.acquireNextImage(UINT64_MAX, *presentCompleteSemaphore, nullptr);
+    recordCommandBuffer(imageIndex);
+
+    device.resetFences(*drawFence);
+
+    /*
+        Why need semaphores?
+            The execution model of a GPU is highly parallel, typically involving multiple queues (such as graphics queues, computing queues, and transmission queues) and complex resource dependencies. 
+            The role of semaphores is to explicitly control the dependencies of these concurrent operations, avoiding resource conflicts or invalid access.
+
+            Cross-queue synchronization:
+                Hardware limitations: 
+                    Different queues of the GPU may run on **different hardware units** (such as the graphics engine and the computing engine). 
+                    If two queues access the same resource (such as an image or buffer) simultaneously, 
+                    it is necessary to ensure through a semaphore that the operation of the previous queue is completed before starting the operation of the next queue.
+                    
+                Example:
+                    After the rendering queue generates an image, it is necessary to notify the rendering queue through a semaphore that the image can be submitted to the screen.
+                    After the computing queue has completed data processing, it needs to notify the graphic queue through a semaphore that the results can be read.
+            
+            Internal synchronization of the queue:
+                Even within the same queue, there may be dependencies among multiple command buffers. 
+                Semaphores can ensure that the execution of subsequent command buffers is triggered only after the previous command buffer has been completed.
+    */
+
+    vk::PipelineStageFlags waitDestinationStageMask(vk::PipelineStageFlagBits::eColorAttachmentOutput);
+    const vk::SubmitInfo submitInfo{
+        /*
+            The first three parameters specify which semaphores to wait on before execution begins and in which stage(s) of the pipeline to wait.
+        */
+        .waitSemaphoreCount = 1,
+        .pWaitSemaphores = &*presentCompleteSemaphore,
+        .pWaitDstStageMask = &waitDestinationStageMask,
+
+        /*
+            specifies which command buffers to actually submit for execution
+        */
+        .commandBufferCount = 1,
+        .pCommandBuffers = &(*commandBuffer),
+
+        /*
+            specifies which semaphores to signal once the command buffer(s) have finished execution
+        */
+        .signalSemaphoreCount = 1,
+        .pSignalSemaphores = &*renderFinishedSemaphore
+    };
+
+    queue.submit(submitInfo, 
+        /*
+            signaled when the command buffers finish execution
+        */
+        *drawFence);
+
+    while (vk::Result::eTimeout == device.waitForFences(*drawFence, vk::True, UINT16_MAX));
+
+    //vk::SubpassDependency dependency{
+    //    .srcSubpass = VK_SUBPASS_EXTERNAL,  // The special value VK_SUBPASS_EXTERNAL refers to the implicit subpass before or after the render pass depending on whether it is specified in srcSubpass or dstSubpass. 
+    //    .dstSubpass = {},  // The index 0 refers to our subpass, which is the first and only one. The dstSubpass must always be higher than srcSubpass to prevent cycles in the dependency graph (unless one of the subpasses is **VK_SUBPASS_EXTERNAL**).
+    //    .srcStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput,
+    //    .dstStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput,
+    //    .srcAccessMask = {},
+    //    .dstAccessMask = vk::AccessFlagBits::eColorAttachmentWrite
+    //};
+
+    const vk::PresentInfoKHR presentInfoKHR{
+        .waitSemaphoreCount = 1,
+        .pWaitSemaphores = &*renderFinishedSemaphore,
+        .swapchainCount = 1,
+        .pSwapchains = &*swapChain,
+        .pImageIndices = &imageIndex
+    };
+
+    // The vkQueuePresentKHR function submits the request to present an image to the swap chain. 
+    result = queue.presentKHR(presentInfoKHR);
+    switch (result)
+    {
+    case vk::Result::eSuccess: break;
+    case vk::Result::eSuboptimalKHR: std::cout << "vk::Queue::presentKHR returned vk::Result::eSuboptimalKHR !\n"; break;
+    default: break;  // an unexpected result is returned!
+    }
+}
+
+void HelloTriangleApp::createSyncObjects()
+{
+    presentCompleteSemaphore = vk::raii::Semaphore(device, vk::SemaphoreCreateInfo());  // Ensure that the image is obtained from the Swap Chain before the rendering queue can use the image
+    renderFinishedSemaphore = vk::raii::Semaphore(device, vk::SemaphoreCreateInfo());  // Notify that the rendering of the presentation queue has been completed and images can be submitted to the screen
+    drawFence = vk::raii::Fence(device, { .flags = vk::FenceCreateFlagBits::eSignaled });
 }

@@ -23,6 +23,8 @@ if (WIN32)
     add_definitions(-DNOMINMAX -D_USE_MATH_DEFINES)
 endif()
 
+message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
+
 set(ENV{VULKAN_SDK} ${CMAKE_SOURCE_DIR}/ThirdParty/vulkansdk)
 find_package(Vulkan REQUIRED)
 
@@ -36,8 +38,7 @@ endif()
 
 # Assets
 set(ASSETS_SRC_DIR "${CMAKE_SOURCE_DIR}/Assets")
-file(COPY ${ASSETS_SRC_DIR} DESTINATION ${CMAKE_BINARY_DIR})
-
+add_compile_definitions(ASSETS_SRC_DIR="${ASSETS_SRC_DIR}")
 # Project
 set(BUILD_SHARED_LIBS ON)
 add_subdirectory(ThirdParty/glfw)

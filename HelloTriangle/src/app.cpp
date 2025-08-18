@@ -3,6 +3,12 @@
 
 int main()
 {
+#ifdef NDEBUG
+    std::cout << "Release mode" << std::endl;
+#else
+    std::cout << "Debug mode" << std::endl;
+#endif
+
     HelloTriangleApp app;
 
     try
