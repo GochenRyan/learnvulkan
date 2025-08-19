@@ -13,8 +13,10 @@
 #define GLFW_INCLUDE_VULKAN // REQUIRED only for GLFW CreateWindowSurface.
 #include <GLFW/glfw3.h>
 
-const uint32_t WIDTH = 800;
-const uint32_t HEIGHT = 600;
+constexpr  uint32_t WIDTH = 800;
+constexpr  uint32_t HEIGHT = 600;
+
+constexpr int MAX_FRAMES_IN_FLIGHT = 2;
 
 const std::vector<const char*> validationLayers = {
     "VK_LAYER_KHRONOS_validation"
@@ -64,7 +66,7 @@ private:
     [[nodiscard]] vk::raii::ShaderModule createShaderModule(const std::vector<char>& code) const;
 
     void createCommandPool();
-    void createCommandBuffer();
+    void createCommandBuffers();
     void recordCommandBuffer(uint32_t imageIndex);
     void transition_image_layout(uint32_t imageIndex, vk::ImageLayout oldLayout, vk::ImageLayout newLayout, vk::AccessFlags2 srcAccessMask, vk::AccessFlags2 dstAccessMask, vk::PipelineStageFlags2 srcStageMask, vk::PipelineStageFlags2 dstStageMask);
 
@@ -104,11 +106,14 @@ private:
     vk::raii::Pipeline graphicsPipeline = nullptr;
 
     vk::raii::CommandPool commandPool = nullptr;
-    vk::raii::CommandBuffer commandBuffer = nullptr;
+    std::vector<vk::raii::CommandBuffer> commandBuffers;
 
-    vk::raii::Semaphore presentCompleteSemaphore = nullptr;
-    vk::raii::Semaphore renderFinishedSemaphore = nullptr;
-    vk::raii::Fence drawFence = nullptr;
+    std::vector<vk::raii::Semaphore> presentCompleteSemaphores;
+    std::vector<vk::raii::Semaphore> renderFinishedSemaphores;
+    std::vector<vk::raii::Fence> inFlightFences;
 
     uint32_t queueIndex = ~0;
+
+    uint32_t semaphoreIndex = 0;
+    uint32_t currentFrame = 0;
 };
