@@ -45,6 +45,12 @@ static vk::PresentModeKHR chooseSwapPresentMode(const std::vector<vk::PresentMod
     return vk::PresentModeKHR::eFifo;
 }
 
+static void framebufferResizeCallback(GLFWwindow* window, int width, int height)
+{
+    auto app = reinterpret_cast<HelloTriangleApp*>(glfwGetWindowUserPointer(window));
+    app->framebufferResized = true;
+}
+
 vk::Extent2D HelloTriangleApp::chooseSwapExtent(const vk::SurfaceCapabilitiesKHR& capabilities)
 {
     /*
@@ -144,8 +150,9 @@ void HelloTriangleApp::initWindow()
 {
     glfwInit();
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
     window = glfwCreateWindow(WIDTH, HEIGHT, "Vulkan", nullptr, nullptr);
+    glfwSetWindowUserPointer(window, this);
+    glfwSetFramebufferSizeCallback(window, framebufferResizeCallback);
 }
 
 void HelloTriangleApp::initVulkan()
@@ -159,6 +166,7 @@ void HelloTriangleApp::initVulkan()
     createImageViews();
     createGraphicPipeline();
     createCommandPool();
+    createVertexBuffer();
     createCommandBuffers();
     createSyncObjects();
 }
@@ -431,7 +439,14 @@ void HelloTriangleApp::createGraphicPipeline()
 
     vk::PipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo , fragShaderStageInfo };
 
-    vk::PipelineVertexInputStateCreateInfo vertexInputInfo;
+    auto bindingDescription = Vertex::getBindingDescription();
+    auto attributeDescriptions = Vertex::getAttributeDescriptions();
+    vk::PipelineVertexInputStateCreateInfo vertexInputInfo{
+        .vertexBindingDescriptionCount = 1,
+        .pVertexBindingDescriptions = &bindingDescription,
+        .vertexAttributeDescriptionCount = attributeDescriptions.size(),
+        .pVertexAttributeDescriptions = attributeDescriptions.data()
+    };
     /*
         The former is specified in the topology member and can have values like:
             VK_PRIMITIVE_TOPOLOGY_POINT_LIST: points from vertices
@@ -635,6 +650,7 @@ void HelloTriangleApp::recordCommandBuffer(uint32_t imageIndex)
 
     commandBuffers[currentFrame].beginRendering(renderingInfo);
     commandBuffers[currentFrame].bindPipeline(vk::PipelineBindPoint::eGraphics, *graphicsPipeline);
+    commandBuffers[currentFrame].bindVertexBuffers(0, *vertexBuffer, { 0 });
     commandBuffers[currentFrame].setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(swapChainExtent.width), static_cast<float>(swapChainExtent.height), 0.0f, 1.0f));
     commandBuffers[currentFrame].setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), swapChainExtent));
     commandBuffers[currentFrame].draw(3, 1, 0, 0);
@@ -699,6 +715,23 @@ void HelloTriangleApp::drawFrame()
     while (vk::Result::eTimeout == device.waitForFences(*inFlightFences[currentFrame], vk::True, UINT16_MAX));
 
     auto [result, imageIndex] = swapChain.acquireNextImage(UINT64_MAX, *presentCompleteSemaphores[semaphoreIndex], nullptr);
+
+    /*
+        VK_ERROR_OUT_OF_DATE_KHR: The swap chain has become incompatible with the surface and can no longer be used for rendering. Usually happens after a window resize.
+        VK_SUBOPTIMAL_KHR: The swap chain can still be used to successfully present to the surface, but the surface properties are no longer matched exactly.
+    */
+    if (result == vk::Result::eErrorOutOfDateKHR || result == vk::Result::eSuboptimalKHR || framebufferResized)
+    {
+        framebufferResized = false;
+        recreateSwapChain();
+        return;
+    }
+
+    if (result != vk::Result::eSuccess && result != vk::Result::eSuboptimalKHR)
+    {
+        throw std::runtime_error("failed to acquire swap chain image!");
+    }
+
     device.resetFences(*inFlightFences[currentFrame]);
     commandBuffers[currentFrame].reset();
     recordCommandBuffer(imageIndex);
@@ -751,8 +784,6 @@ void HelloTriangleApp::drawFrame()
         */
         *inFlightFences[currentFrame]);
 
-    
-
     //vk::SubpassDependency dependency{
     //    .srcSubpass = VK_SUBPASS_EXTERNAL,  // The special value VK_SUBPASS_EXTERNAL refers to the implicit subpass before or after the render pass depending on whether it is specified in srcSubpass or dstSubpass. 
     //    .dstSubpass = {},  // The index 0 refers to our subpass, which is the first and only one. The dstSubpass must always be higher than srcSubpass to prevent cycles in the dependency graph (unless one of the subpasses is **VK_SUBPASS_EXTERNAL**).
@@ -764,7 +795,7 @@ void HelloTriangleApp::drawFrame()
 
     const vk::PresentInfoKHR presentInfoKHR{
         .waitSemaphoreCount = 1,
-        .pWaitSemaphores = &*renderFinishedSemaphores[imageIndex],
+        .pWaitSemaphores = &*renderFinishedSemaphores[semaphoreIndex],
         .swapchainCount = 1,
         .pSwapchains = &*swapChain,
         .pImageIndices = &imageIndex
@@ -772,13 +803,13 @@ void HelloTriangleApp::drawFrame()
 
     // The vkQueuePresentKHR function submits the request to present an image to the swap chain. 
     result = queue.presentKHR(presentInfoKHR);
-    switch (result)
-    {
-    case vk::Result::eSuccess: break;
-    case vk::Result::eSuboptimalKHR: std::cout << "vk::Queue::presentKHR returned vk::Result::eSuboptimalKHR !\n"; break;
-    default: break;  // an unexpected result is returned!
+    if (result == vk::Result::eErrorOutOfDateKHR || result == vk::Result::eSuboptimalKHR || framebufferResized) {
+        framebufferResized = false;
+        recreateSwapChain();
     }
-
+    else if (result != vk::Result::eSuccess) {
+        throw std::runtime_error("failed to present swap chain image!");
+    }
     semaphoreIndex = (semaphoreIndex + 1) % presentCompleteSemaphores.size();
     currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 }
@@ -799,4 +830,102 @@ void HelloTriangleApp::createSyncObjects()
     {
         inFlightFences.emplace_back(device, vk::FenceCreateInfo { .flags = vk::FenceCreateFlagBits::eSignaled });
     }
+}
+
+void HelloTriangleApp::recreateSwapChain()
+{
+    int width = 0, height = 0;
+    glfwGetFramebufferSize(window, &width, &height);
+    while (width == 0 || height == 0) {
+        glfwGetFramebufferSize(window, &width, &height);
+        glfwWaitEvents();
+    }
+
+    device.waitIdle();
+
+    cleanupSwapChain();
+    createSwapChain();
+    createImageViews();
+}
+
+void HelloTriangleApp::cleanupSwapChain()
+{
+    /*
+        The disadvantage of this approach is that we need to stop all renderings before creating the new swap chain. 
+        It is possible to create a new swap chain while drawing commands on an image from the old swap chain are still in-flight. 
+        You need to pass the previous swap chain to the oldSwapchain field in the VkSwapchainCreateInfoKHR struct and destroy the old swap chain as soon as you’ve finished using it.
+    */
+    swapChainImageViews.clear();
+    swapChain = nullptr;
+}
+
+
+/*
+    Buffers in Vulkan are regions of memory used for storing arbitrary data that can be read by the graphics card. 
+*/
+void HelloTriangleApp::createVertexBuffer()
+{
+    vk::BufferCreateInfo bufferInfo{
+        // used to configure sparse buffer memory,
+        .flags = {},
+        // specifies the size of the buffer in bytes.
+        .size = sizeof(vertices[0]) * vertices.size(),
+        // indicates for which purposes the data in the buffer is going to be used. It is possible to specify multiple purposes using a bitwise or.
+        .usage = vk::BufferUsageFlagBits::eVertexBuffer,
+        .sharingMode = vk::SharingMode::eExclusive
+    };
+    vertexBuffer = vk::raii::Buffer(device, bufferInfo);
+
+    /*
+        The VkMemoryRequirements struct has three fields:
+            size: The size of the required memory in bytes may differ from bufferInfo.size.
+            alignment: The offset in bytes where the buffer begins in the allocated region of memory, depends on bufferInfo.usage and bufferInfo.flags.
+            memoryTypeBits: Bit field of the memory types that are suitable for the buffer.
+    */
+    vk::MemoryRequirements memRequirements = vertexBuffer.getMemoryRequirements();
+
+    vk::MemoryAllocateInfo memoryAllocateInfo{
+        .allocationSize = memRequirements.size,
+        .memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent)
+    };
+
+    vertexBufferMemory = vk::raii::DeviceMemory(device, memoryAllocateInfo);
+    vertexBuffer.bindMemory(*vertexBufferMemory, /* the offset within the region of memory. If the offset is non-zero, then it is required to be divisible by memRequirements.alignment. */0);
+
+    void* data = vertexBufferMemory.mapMemory(0, bufferInfo.size);
+    /*
+        Unfortunately, the driver may not immediately copy the data into the buffer memory, for example, because of caching. 
+        It is also possible that writes to the buffer are not visible in the mapped memory yet. There are two ways to deal with that problem:
+            Use a memory heap that is host coherent, indicated with VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
+            Call vkFlushMappedMemoryRanges after writing to the mapped memory, and call vkInvalidateMappedMemoryRanges before reading from the mapped memory
+
+        Flushing memory ranges or using a coherent memory heap means that the driver will be aware of our writings to the buffer, but it doesn’t mean that they are actually visible on the GPU yet. 
+        The transfer of data to the GPU is an operation that happens in the background, and the specification simply tells us that it is guaranteed to be complete as of the next call to vkQueueSubmit.
+    */
+    memcpy(data, vertices.data(), bufferInfo.size);
+}
+
+/*
+    Graphics cards can offer different types of memory to allocate from. 
+    Each type of memory varies in terms of allowed operations and performance characteristics. 
+    We need to combine the requirements of the buffer and our own application requirements to find the right type of memory to use.
+*/
+uint32_t HelloTriangleApp::findMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties)
+{
+    /*
+        The VkPhysicalDeviceMemoryProperties structure has two arrays memoryTypes and memoryHeaps. 
+        Memory heaps are distinct memory resources like **dedicated VRAM** and **swap space in RAM** for when VRAM runs out. 
+        The different types of memory exist within these heaps.
+    */
+    vk::PhysicalDeviceMemoryProperties memProperties = physicalDevice.getMemoryProperties();
+
+    for (uint32_t i = 0; i < memProperties.memoryTypeCount; ++i)
+    {
+        if (typeFilter & (1 << i) && (memProperties.memoryTypes[i].propertyFlags & properties) == properties)
+        {
+            return i;
+        }
+    }
+
+    throw std::runtime_error("failed to find suitable memory type!");
 }

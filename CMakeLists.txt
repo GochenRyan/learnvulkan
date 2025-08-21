@@ -36,6 +36,13 @@ if (${Vulkan_FOUND})
     copy_specified_files_to_build(FILES ${Vulkan_LIBRARY})
 endif()
 
+add_custom_target(
+    RunScript ALL
+    COMMAND cmd.exe /c "${CMAKE_SOURCE_DIR}/compile.bat ${CMAKE_SOURCE_DIR}/Assets/Shader/HelloTriangle/shader.slang ${CMAKE_SOURCE_DIR}/Assets/Shader/HelloTriangle/slang.spv"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    COMMENT "Parsing shaders..."
+)
+
 # Assets
 set(ASSETS_SRC_DIR "${CMAKE_SOURCE_DIR}/Assets")
 add_compile_definitions(ASSETS_SRC_DIR="${ASSETS_SRC_DIR}")
