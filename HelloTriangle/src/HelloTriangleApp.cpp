@@ -1,8 +1,10 @@
 #include <HelloTriangle/HelloTriangleApp.h>
+#include <chrono>
+#include <format>
+#include <fstream>
+#include <glm/gtc/matrix_transform.hpp>
 #include <iostream>
 #include <stdexcept>
-#include <fstream>
-#include <format>
 
 static VKAPI_ATTR vk::Bool32 VKAPI_CALL debugCallback(vk::DebugUtilsMessageSeverityFlagBitsEXT severity, vk::DebugUtilsMessageTypeFlagsEXT type, const vk::DebugUtilsMessengerCallbackDataEXT* pCallbackData, void*) {
     if (severity == vk::DebugUtilsMessageSeverityFlagBitsEXT::eError || severity == vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning) {
@@ -164,9 +166,14 @@ void HelloTriangleApp::initVulkan()
     createLogicalDevice();
     createSwapChain();
     createImageViews();
+    createDescriptorSetLayout();
     createGraphicPipeline();
     createCommandPool();
     createVertexBuffer();
+    createIndexBuffer();
+    createUniformBuffers();
+    createDescriptorPool();
+    createDescriptorSets();
     createCommandBuffers();
     createSyncObjects();
 }
@@ -487,7 +494,13 @@ void HelloTriangleApp::createGraphicPipeline()
         .rasterizerDiscardEnable = vk::False,
         .polygonMode = vk::PolygonMode::eFill,
         .cullMode = vk::CullModeFlagBits::eBack,
-        .frontFace = vk::FrontFace::eClockwise,
+        /*
+            Nothing is visible because of the Y-flip we did in the projection matrix, 
+            the vertices are now being drawn in counter-clockwise order instead of clockwise order. 
+            This causes backface culling to kick in and prevents any geometry from being drawn.
+            The determination of face orientation occurs during the **rasterization stage**
+        */
+        .frontFace = vk::FrontFace::eCounterClockwise,
         .depthBiasEnable = vk::False,
         .depthBiasSlopeFactor = 1.0f,
         .lineWidth = 1.0f
@@ -518,7 +531,11 @@ void HelloTriangleApp::createGraphicPipeline()
         Uniform values need to be specified during pipeline creation by creating a VkPipelineLayout object. 
         Even though we won’t be using them now, we are still required to create an empty pipeline layout.
     */
-    vk::PipelineLayoutCreateInfo pipelineLayoutInfo{ .setLayoutCount = 0, .pushConstantRangeCount = 0 };
+    vk::PipelineLayoutCreateInfo pipelineLayoutInfo{ 
+        .setLayoutCount = 1, 
+        .pSetLayouts = &*descriptorSetLayout,
+        .pushConstantRangeCount = 0 
+    };
     pipelineLayout = vk::raii::PipelineLayout(device, pipelineLayoutInfo);
 
     vk::PipelineRenderingCreateInfo pipelineRenderingInfo{
@@ -542,7 +559,7 @@ void HelloTriangleApp::createGraphicPipeline()
         .pMultisampleState = &multisamplingInfo,
         .pColorBlendState = &colorBlendingInfo,
         .pDynamicState = &dynamicStateInfo,
-        .layout = pipelineLayout,
+        .layout = *pipelineLayout,
         /*
             Set to nullptr because we’re using dynamic rendering instead of a traditional render pass.
         */
@@ -654,10 +671,20 @@ void HelloTriangleApp::recordCommandBuffer(uint32_t imageIndex)
     commandBuffers[currentFrame].beginRendering(renderingInfo);
     commandBuffers[currentFrame].bindPipeline(vk::PipelineBindPoint::eGraphics, *graphicsPipeline);
     commandBuffers[currentFrame].bindVertexBuffers(0, *vertexBuffer, { 0 });
+    commandBuffers[currentFrame].bindIndexBuffer(*indexBuffer, 0, vk::IndexType::eUint16);
     commandBuffers[currentFrame].setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(swapChainExtent.width), static_cast<float>(swapChainExtent.height), 0.0f, 1.0f));
     commandBuffers[currentFrame].setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), swapChainExtent));
-    commandBuffers[currentFrame].draw(3, 1, 0, 0);
-
+    commandBuffers[currentFrame].bindDescriptorSets(
+        // Unlike vertex and index buffers, descriptor sets are not unique to graphics pipelines. Therefore, we need to specify if we want to bind descriptor sets to the graphics or compute pipeline. 
+        vk::PipelineBindPoint::eGraphics, 
+        // The layout that the descriptors are based on. 
+        pipelineLayout, 
+        // The index of the first descriptor set
+        0, 
+        *descriptorSets[currentFrame], 
+        nullptr);
+    //commandBuffers[currentFrame].draw(3, 1, 0, 0);
+    commandBuffers[currentFrame].drawIndexed(indices.size(), 1, 0, 0, 0);
     commandBuffers[currentFrame].endRendering();
     
     transition_image_layout(
@@ -734,6 +761,8 @@ void HelloTriangleApp::drawFrame()
     {
         throw std::runtime_error("failed to acquire swap chain image!");
     }
+
+    updateUniformBuffer(currentFrame);
 
     device.resetFences(*inFlightFences[currentFrame]);
     commandBuffers[currentFrame].reset();
@@ -994,4 +1023,164 @@ void HelloTriangleApp::copyBuffer(vk::raii::Buffer& srcBuffer, vk::raii::Buffer&
         .pCommandBuffers = &*commandCopyBuffer
     }, nullptr);
     queue.waitIdle();
+}
+
+void HelloTriangleApp::createIndexBuffer()
+{
+    vk::DeviceSize bufferSize = sizeof(indices[0]) * indices.size();
+    vk::raii::Buffer stagingBuffer = nullptr;
+    vk::raii::DeviceMemory stagingBufferMemory = nullptr;
+    createBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, stagingBuffer, stagingBufferMemory);
+    void* dataStaging = stagingBufferMemory.mapMemory(0, bufferSize);
+    memcpy(dataStaging, indices.data(), bufferSize);
+    stagingBufferMemory.unmapMemory();
+
+    createBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eIndexBuffer, vk::MemoryPropertyFlagBits::eDeviceLocal, indexBuffer, indexBufferMemory);
+    copyBuffer(stagingBuffer, indexBuffer, bufferSize);
+}
+
+
+/*
+    A descriptor is a way for shaders to freely access resources like buffers and images. 
+    We’re going to set up a buffer that contains the transformation matrices and have the vertex shader access them through a descriptor. Usage of descriptors consists of three parts:
+        Specify a descriptor set layout during pipeline creation
+        Allocate a descriptor set from a descriptor pool
+        Bind the descriptor set during rendering
+*/
+/*
+    Different between descriptor design and vertex/index design
+        Semantics and usage scenarios are different
+            Vertex/Index: This belongs to the input assembly stage. The GPU requires a continuous vertex stream/index stream, and the access mode is simple (continuous reading, fixed format). Binding buffer + offset directly to IA (input assembly) is low-overhead and intuitive.
+            Descriptor (Uniform/Storage/Texture/Sampler) : is the shader anywhere access to the internal resources, may be an array, random access, across the shader stages, different life cycle and align with the format requirements, access pattern is complicated.
+        Indirect addressing and indexing are required
+            Shaders often need to access a large number of resources (texture arrays, bindless) by index. The Descriptor provides an intermediate table (descriptor set) - the shader only sees the index/handle, and the actual location of the physical resource is pointed to by the descriptor. 
+            Directly "writing Pointers into the command stream" like vertex does cannot effectively support such dynamic indexing or massive resource collections.
+        The lifecycle is different from the reuse strategy
+            Vertex/Index buffering is usually used directly once or several times in the short term; Material maps, Samplers, uniforms and other resources will be reused for a long time after loading. 
+            Descriptor allows long-term unchanging objects (textures) to be updated and reused at one time instead of being rewritten each time a draw is made.
+        Driver/hardware predictability and preprocessing
+            The Descriptor layout can describe the expected resource structure of the shader when the pipeline is created, and the driver can pre-allocate the hardware table or perform verification/optimization. 
+            It is very difficult for the driver to perform such "pre-compilation" optimization each time vertex/index is bound. Predictability is at the core of the Vulkan performance model.
+        Concurrency and Multithreading preparation
+            Descriptor sets can be pre-built/updated in CPU multithreading, and then only low-cost bindings are performed in the rendering hot path. 
+            Repeatedly modifying a large number of resources during draw will hinder multi-threaded recording and efficient parallelism.
+        Support advanced features (dynamic offsets/bindless/push descriptors)
+            The Descriptor system allows functions such as dynamic offset (the same descriptor pointing to different segments of the large buffer) and descriptor indexing (close to bindless), 
+            which cannot be naturally expressed by the traditional vertex/index binding.
+        Memory management and fragmentation control
+            With the concepts of descriptor pool and sets, the application can control the allocation strategy, reclaim and reset, avoiding uncontrollable allocation by the driver in the hot path.
+    =>
+        The core of descriptor is "explicit indirect resource description" - it declares the structure and binding relationship of resources, enabling drivers and hardware to prepare, reuse and parallelize in advance,
+        rather than turning resource binding into unordered and unpredictable runtime work.
+*/
+void HelloTriangleApp::createDescriptorSetLayout()
+{
+    vk::DescriptorSetLayoutBinding uboLayoutBinding{
+        .binding = 0,
+        .descriptorType = vk::DescriptorType::eUniformBuffer,
+        .descriptorCount = 1,
+        .stageFlags = vk::ShaderStageFlagBits::eVertex,
+        .pImmutableSamplers = nullptr
+    };
+    vk::DescriptorSetLayoutCreateInfo layoutInfo{
+        .bindingCount = 1,
+        .pBindings = &uboLayoutBinding
+    };
+    descriptorSetLayout = vk::raii::DescriptorSetLayout(device, layoutInfo);
+}
+
+void HelloTriangleApp::createUniformBuffers()
+{
+    uniformBuffers.clear();
+    uniformBuffersMemory.clear();
+    uniformBuffersMapped.clear();
+
+    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
+    {
+        vk::DeviceSize bufferSize = sizeof(UniformBufferObject);
+        vk::raii::Buffer buffer = nullptr;
+        vk::raii::DeviceMemory bufferMemory = nullptr;
+        createBuffer(bufferSize, vk::BufferUsageFlagBits::eUniformBuffer, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, buffer, bufferMemory);
+        uniformBuffers.emplace_back(std::move(buffer));
+        uniformBuffersMemory.emplace_back(std::move(bufferMemory));
+        uniformBuffersMapped.emplace_back(uniformBuffersMemory[i].mapMemory(0, bufferSize));
+    }
+}
+
+void HelloTriangleApp::updateUniformBuffer(uint32_t currentFrame)
+{
+    static auto startTime = std::chrono::high_resolution_clock::now();
+
+    auto currentTime = std::chrono::high_resolution_clock::now();
+    float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
+
+    UniformBufferObject ubo{};
+    // The glm::rotate function takes an existing transformation, rotation angle and rotation axis as parameters.
+    ubo.model = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+    // For the view transformation I’ve decided to look at the geometry from above at a 45 degree angle. The glm::lookAt function takes the eye position, center position and up axis as parameters.
+    ubo.view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+    // I’ve chosen to use a perspective projection with a 45 degree vertical field-of-view. The other parameters are the aspect ratio, near and far view planes. 
+    ubo.proj = glm::perspective(glm::radians(45.0f), static_cast<float>(swapChainExtent.width) / static_cast<float>(swapChainExtent.height), 0.0f, 10.0f);
+    // GLM was originally designed for OpenGL, where the Y coordinate of the clip coordinates is inverted. The easiest way to compensate for that is to flip the sign on the scaling factor of the Y axis in the projection matrix. 
+    // If you don’t do this, then the image will be rendered upside down.
+    ubo.proj[1][1] *= -1;
+    memcpy(uniformBuffersMapped[currentFrame], &ubo, sizeof(ubo));
+}
+
+void HelloTriangleApp::createDescriptorPool()
+{
+    vk::DescriptorPoolSize poolSize(vk::DescriptorType::eUniformBuffer, MAX_FRAMES_IN_FLIGHT);
+    vk::DescriptorPoolCreateInfo poolInfo{
+        .flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
+        .maxSets = MAX_FRAMES_IN_FLIGHT,
+        .poolSizeCount = 1,
+        .pPoolSizes = &poolSize
+    };
+    descriptorPool = vk::raii::DescriptorPool(device, poolInfo);
+}
+
+void HelloTriangleApp::createDescriptorSets()
+{
+    std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, *descriptorSetLayout);
+    vk::DescriptorSetAllocateInfo allocInfo{
+        .descriptorPool = descriptorPool,
+        .descriptorSetCount = static_cast<uint32_t>(layouts.size()),
+        .pSetLayouts = layouts.data()
+    };
+
+    descriptorSets.clear();
+    descriptorSets = device.allocateDescriptorSets(allocInfo);
+
+    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
+    {
+        vk::DescriptorBufferInfo bufferInfo{
+            .buffer = uniformBuffers[i],
+            .offset = 0,
+            .range = sizeof(UniformBufferObject)
+        };
+        vk::WriteDescriptorSet descriptorWrite{
+            /*
+*             The first two fields specify the descriptor set to update and the binding. 
+            */
+            .dstSet = descriptorSets[i],
+            // Remember that descriptors can be arrays, so we also need to specify the first index in the array that we want to update. 
+            // We’re not using an array, so the index is simply 0.
+            .dstBinding = 0,
+
+            // It’s possible to update multiple descriptors at once in an array, starting at index dstArrayElement.
+            .dstArrayElement = 0,
+            // The descriptorCount field specifies how many array elements you want to update.
+            .descriptorCount = 1,
+            .descriptorType = vk::DescriptorType::eUniformBuffer,
+            /*
+                 The pBufferInfo field is used for descriptors that refer to buffer data, 
+                 pImageInfo is used for descriptors that refer to image data, 
+                 and pTexelBufferView is used for descriptors that refer to buffer views. 
+                 Our descriptor is based on buffers, so we’re using pBufferInfo.
+            */
+            .pBufferInfo = &bufferInfo
+        };
+
+        device.updateDescriptorSets(descriptorWrite, {});
+    }
 }

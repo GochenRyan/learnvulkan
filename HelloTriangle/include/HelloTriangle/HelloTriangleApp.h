@@ -79,9 +79,31 @@ struct Vertex
 };
 
 const std::vector<Vertex> vertices = {
-    {{0.0f, -0.5f}, {1.0f, 0.0f, 0.0f}},
-    {{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
-    {{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}
+    {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},
+    {{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},
+    {{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
+    {{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}}
+};
+
+const std::vector<uint16_t> indices = {
+    0, 1, 2, 2, 3, 0
+};
+
+/*
+    Vulkan expects the data in your structure to be aligned in memory in a specific way, for example:
+        Scalars have to be aligned by N (= 4 bytes given 32-bit floats).
+        A float2 must be aligned by 2N (= 8 bytes)
+        A float3 or float4 must be aligned by 4N (= 16 bytes)
+        A nested structure must be aligned by the base alignment of its members rounded up to a multiple of 16.
+        A float4x4 matrix must have the same alignment as a float4.
+*/
+struct UniformBufferObject 
+{
+    glm::vec2 foo;
+    // Its function is to inform the compiler that the memory address of the variable or type must be a multiple of 16, thereby meeting specific hardware or performance requirements
+    alignas(16) glm::mat4 model;
+    glm::mat4 view;
+    glm::mat4 proj;
 };
 
 class HelloTriangleApp final
@@ -132,10 +154,21 @@ private:
     void cleanupSwapChain();
     void recreateSwapChain();
 
+    /*
+        Vulkan Memory Management : https://developer.nvidia.com/vulkan-memory-management
+    */
     void createVertexBuffer();
     uint32_t findMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties);
     void createBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage, vk::MemoryPropertyFlags properties, vk::raii::Buffer& buffer, vk::raii::DeviceMemory& bufferMemory);
     void copyBuffer(vk::raii::Buffer& srcBuffer, vk::raii::Buffer& dstBuffer, vk::DeviceSize size);
+
+    void createIndexBuffer();
+
+    void createDescriptorSetLayout();
+    void createUniformBuffers();
+    void updateUniformBuffer(uint32_t currentImage);
+    void createDescriptorPool();
+    void createDescriptorSets();
 private:
     GLFWwindow* window{ nullptr };
 
@@ -165,9 +198,8 @@ private:
 
     std::vector<vk::raii::ImageView> swapChainImageViews;
 
-    vk::PipelineLayout pipelineLayout = nullptr;
-
     vk::raii::Pipeline graphicsPipeline = nullptr;
+    vk::raii::PipelineLayout pipelineLayout = nullptr;
 
     vk::raii::CommandPool commandPool = nullptr;
     std::vector<vk::raii::CommandBuffer> commandBuffers;
@@ -183,6 +215,17 @@ private:
     
     vk::raii::Buffer vertexBuffer = nullptr;
     vk::raii::DeviceMemory vertexBufferMemory = nullptr;
+
+    vk::raii::Buffer indexBuffer = nullptr;
+    vk::raii::DeviceMemory indexBufferMemory = nullptr;
+
+    vk::raii::DescriptorSetLayout descriptorSetLayout = nullptr;
+    
+    std::vector<vk::raii::Buffer> uniformBuffers;
+    std::vector<vk::raii::DeviceMemory> uniformBuffersMemory;
+    std::vector<void*> uniformBuffersMapped;
+    vk::raii::DescriptorPool descriptorPool = nullptr;
+    std::vector<vk::raii::DescriptorSet> descriptorSets;
 public:
     /*
         Although many drivers and platforms trigger VK_ERROR_OUT_OF_DATE_KHR automatically after a window resize, it is not guaranteed to happen. 
