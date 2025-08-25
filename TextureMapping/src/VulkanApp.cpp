@@ -6,6 +6,9 @@
 #include <iostream>
 #include <stdexcept>
 
+#define STB_IMAGE_IMPLEMENTATION
+#include <stb_image.h>
+
 static VKAPI_ATTR vk::Bool32 VKAPI_CALL debugCallback(vk::DebugUtilsMessageSeverityFlagBitsEXT severity, vk::DebugUtilsMessageTypeFlagsEXT type, const vk::DebugUtilsMessengerCallbackDataEXT* pCallbackData, void*) {
     if (severity == vk::DebugUtilsMessageSeverityFlagBitsEXT::eError || severity == vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning) {
         std::cerr << "validation layer: type " << to_string(type) << " msg: " << pCallbackData->pMessage << std::endl;
@@ -169,6 +172,7 @@ void VulkanApp::initVulkan()
     createDescriptorSetLayout();
     createGraphicPipeline();
     createCommandPool();
+    createTextureImage();
     createVertexBuffer();
     createIndexBuffer();
     createUniformBuffers();
@@ -1007,22 +1011,9 @@ void VulkanApp::createBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage, vk
 
 void VulkanApp::copyBuffer(vk::raii::Buffer& srcBuffer, vk::raii::Buffer& dstBuffer, vk::DeviceSize size)
 {
-    vk::CommandBufferAllocateInfo allocInfo{
-        .commandPool = commandPool,
-        .level = vk::CommandBufferLevel::ePrimary,
-        .commandBufferCount = MAX_FRAMES_IN_FLIGHT
-    };
-    vk::raii::CommandBuffer commandCopyBuffer = std::move(vk::raii::CommandBuffers(device, allocInfo).front());
-    commandCopyBuffer.begin(vk::CommandBufferBeginInfo{
-        .flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit
-    });
+    vk::raii::CommandBuffer commandCopyBuffer = beginSingleTimeCommands();
     commandCopyBuffer.copyBuffer(srcBuffer, dstBuffer, vk::BufferCopy(0, 0, size));
-    commandCopyBuffer.end();
-    queue.submit(vk::SubmitInfo{
-        .commandBufferCount = 1,
-        .pCommandBuffers = &*commandCopyBuffer
-    }, nullptr);
-    queue.waitIdle();
+    endSingleTimeCommands(commandCopyBuffer);
 }
 
 void VulkanApp::createIndexBuffer()
@@ -1183,4 +1174,187 @@ void VulkanApp::createDescriptorSets()
 
         device.updateDescriptorSets(descriptorWrite, {});
     }
+}
+
+// todo: Try to experiment with this by creating a setupCommandBuffer that the helper functions record commands into, and add a flushSetupCommands to execute the commands that have been recorded so far. 
+// It’s best to do this after the texture mapping works to check if the texture resources are still set up correctly.
+void VulkanApp::createTextureImage()
+{
+    int texWidth, texHeight, texChannels;
+    stbi_uc* pixels = stbi_load(ASSETS_SRC_DIR "/Texture/TextureMapping/texture.jpg", &texWidth, &texHeight, &texChannels, 
+        // The STBI_rgb_alpha value forces the image to be loaded with an alpha channel, even if it doesn’t have one
+        STBI_rgb_alpha);
+    vk::DeviceSize imageSize = texWidth * texHeight * 4;
+
+    if (!pixels)
+        throw std::runtime_error("failed to load texture image!");
+    
+    vk::raii::Buffer stagingBuffer = nullptr;
+    vk::raii::DeviceMemory stagingBufferMemory = nullptr;
+    createBuffer(imageSize, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, stagingBuffer, stagingBufferMemory);
+    void* dataStaging = stagingBufferMemory.mapMemory(0, imageSize);
+    memcpy(dataStaging, pixels, imageSize);
+    stagingBufferMemory.unmapMemory();
+
+    stbi_image_free(pixels);
+
+    createImage(texWidth, texHeight, vk::Format::eR8G8B8A8Srgb, vk::ImageTiling::eOptimal, vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled, vk::MemoryPropertyFlagBits::eDeviceLocal, textureImage, textureImageMemory);
+
+    transitionImageLayout(textureImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal);
+    copyBufferToImage(stagingBuffer, textureImage, static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight));
+    transitionImageLayout(textureImage, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+}
+
+void VulkanApp::createImage(uint32_t width, uint32_t height, vk::Format format, vk::ImageTiling tiling, vk::ImageUsageFlags usage, vk::MemoryPropertyFlags properties, vk::raii::Image& image, vk::raii::DeviceMemory& imageMemory)
+{
+    vk::ImageCreateInfo imageInfo{
+        /*
+            tells Vulkan with what kind of coordinate system the texels in the image are going to be addressed. It is possible to create 1D, 2D and 3D images. 
+            One dimensional images can be used to store an array of data or gradient, 
+            two dimensional images are mainly used for textures, 
+            and three dimensional images can be used to store voxel volumes
+        */
+        .imageType = vk::ImageType::e2D,
+        .format = format,
+        .extent = {width, height, 
+        //  The extent field specifies the dimensions of the image, basically how many texels there are on each axis. That’s why depth must be 1 instead of 0
+        1},
+        .mipLevels = 1,
+        .arrayLayers = 1,
+        // The samples flag is related to multisampling. This is only relevant for images that will be used as attachments, so stick to one sample. 
+        .samples = vk::SampleCountFlagBits::e1,
+        /*
+            VK_IMAGE_TILING_LINEAR: Texels are laid out in row-major order like our pixels array
+            VK_IMAGE_TILING_OPTIMAL: Texels are laid out in an implementation defined order for optimal access
+        */
+        .tiling = tiling,
+        .usage = usage,
+        .sharingMode = vk::SharingMode::eExclusive,
+        // The image will only be used by one queue family: the one that supports graphics (and therefore also) transfer operations.
+        .queueFamilyIndexCount = 0,
+        .pQueueFamilyIndices = {},
+        .initialLayout = vk::ImageLayout::eUndefined
+    };
+
+    image = vk::raii::Image(device, imageInfo);
+    vk::MemoryRequirements memRequirements = image.getMemoryRequirements();
+    vk::MemoryAllocateInfo allocInfo{
+        .allocationSize = memRequirements.size,
+        .memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties)
+    };
+    imageMemory = vk::raii::DeviceMemory(device, allocInfo);
+    image.bindMemory(imageMemory, 0);
+}
+
+vk::raii::CommandBuffer VulkanApp::beginSingleTimeCommands()
+{
+    vk::CommandBufferAllocateInfo allocInfo{
+        .commandPool = commandPool,
+        .level = vk::CommandBufferLevel::ePrimary,
+        .commandBufferCount = 1
+    };
+    vk::raii::CommandBuffer commandBuffer = std::move(vk::raii::CommandBuffers(device, allocInfo).front());
+    commandBuffer.begin(vk::CommandBufferBeginInfo{
+        .flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit
+    });
+
+    return commandBuffer;
+}
+
+void VulkanApp::endSingleTimeCommands(vk::raii::CommandBuffer& commandBuffer)
+{
+    commandBuffer.end();
+    queue.submit(vk::SubmitInfo{
+        .commandBufferCount = 1,
+        .pCommandBuffers = &*commandBuffer
+        }, nullptr);
+    queue.waitIdle();
+}
+
+void VulkanApp::transitionImageLayout(const vk::raii::Image& image, vk::ImageLayout oldLayout, vk::ImageLayout newLayout)
+{
+    auto commandBuffer = beginSingleTimeCommands();
+    vk::ImageMemoryBarrier barrier{
+        .oldLayout = oldLayout,
+        .newLayout = newLayout,
+        .image = image,
+        .subresourceRange = {
+            .aspectMask = vk::ImageAspectFlagBits::eColor,
+            .baseMipLevel = 0,
+            .levelCount = 1,
+            .baseArrayLayer = 0,
+            .layerCount = 1
+        }
+    };
+    vk::PipelineStageFlags sourceStage;
+    vk::PipelineStageFlags destinationStage;
+    if (oldLayout == vk::ImageLayout::eUndefined && 
+        /*
+            There is actually a special type of image layout that supports all operations, VK_IMAGE_LAYOUT_GENERAL. 
+            The problem with it, of course, is that it doesn’t necessarily offer the best performance for any operation. 
+            It is required for some special cases, like using an image as both input and output, or for reading an image after it has left the preinitialized layout.
+        */
+        newLayout == vk::ImageLayout::eTransferDstOptimal)
+    {
+        barrier.srcAccessMask = {};
+        barrier.dstAccessMask = vk::AccessFlagBits::eTransferWrite;
+
+        sourceStage = vk::PipelineStageFlagBits::eTopOfPipe;
+        destinationStage = vk::PipelineStageFlagBits::eTransfer;
+    }
+    else if (oldLayout == vk::ImageLayout::eTransferDstOptimal && newLayout == vk::ImageLayout::eShaderReadOnlyOptimal)
+    {
+        barrier.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
+        barrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
+
+        sourceStage = vk::PipelineStageFlagBits::eTransfer;
+        destinationStage = vk::PipelineStageFlagBits::eFragmentShader;
+    }
+    else
+    {
+        throw std::invalid_argument("unsupported layout transition!");
+    }
+    commandBuffer.pipelineBarrier(
+        /*
+            https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/chap7.html#synchronization-access-types-supported
+        */
+        // The first parameter after the command buffer specifies in which pipeline stage the operations occur that should happen before the barrier.
+        sourceStage, 
+        // The second parameter specifies the pipeline stage in which operations will wait on the barrier. 
+        destinationStage, {}, {}, nullptr, barrier);
+    endSingleTimeCommands(commandBuffer);
+}
+
+void VulkanApp::copyBufferToImage(const vk::raii::Buffer& buffer, vk::raii::Image& image, uint32_t width, uint32_t height)
+{
+    auto commandBuffer = beginSingleTimeCommands();
+    vk::BufferImageCopy region{
+        .bufferOffset = 0,
+
+        /*
+            The bufferRowLength and bufferImageHeight fields specify how the pixels are laid out in memory. 
+            For example, you could have some padding bytes between rows of the image.
+        */
+        .bufferRowLength = 0,
+        .bufferImageHeight = 0,
+
+        .imageSubresource = {
+            .aspectMask = vk::ImageAspectFlagBits::eColor,
+            .mipLevel = 0,
+            .baseArrayLayer = 0,
+            .layerCount = 1
+        },
+        .imageOffset = {
+            .x = 0,
+            .y = 0,
+            .z = 0
+        },
+        .imageExtent = {
+            .width = width,
+            .height = height,
+            .depth = 1
+        }
+    };
+    commandBuffer.copyBufferToImage(buffer, image, vk::ImageLayout::eTransferDstOptimal, {region});
+    endSingleTimeCommands(commandBuffer);
 }
