@@ -106,15 +106,15 @@ struct UniformBufferObject
     glm::mat4 proj;
 };
 
-class HelloTriangleApp final
+class VulkanApp final
 {
 public:
-    HelloTriangleApp() noexcept = default;
-    HelloTriangleApp(const HelloTriangleApp& rhs) = delete;
-    HelloTriangleApp& operator=(const HelloTriangleApp& rhs) = delete;
-    HelloTriangleApp(HelloTriangleApp&& rhs) = delete;
-    HelloTriangleApp& operator=(HelloTriangleApp&& rhs) = delete;
-    ~HelloTriangleApp() = default;
+    VulkanApp() noexcept = default;
+    VulkanApp(const VulkanApp& rhs) = delete;
+    VulkanApp& operator=(const VulkanApp& rhs) = delete;
+    VulkanApp(VulkanApp&& rhs) = delete;
+    VulkanApp& operator=(VulkanApp&& rhs) = delete;
+    ~VulkanApp() = default;
 public:
     void Run();
 private:

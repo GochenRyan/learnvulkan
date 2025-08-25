@@ -11,27 +11,28 @@ include(cmake/OutputDirectories.cmake)
 include(cmake/CopyFilesToBinary.cmake)
 include(cmake/CopySpecifiedFilesToBuild.cmake)
 
-if (PROJECT_BINARY_DIR STREQUAL PROJECT_SOURCE_DIR)
+if(PROJECT_BINARY_DIR STREQUAL PROJECT_SOURCE_DIR)
     message(WARNING "The Binary directory of CMake cannot be the same as source directory!")
 endif()
 
-if (NOT CMAKE_BUILD_TYPE)
+if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
-if (WIN32)
+if(WIN32)
     add_definitions(-DNOMINMAX -D_USE_MATH_DEFINES)
 endif()
 
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 
-set(ENV{VULKAN_SDK} ${CMAKE_SOURCE_DIR}/ThirdParty/vulkansdk)
+# set(ENV{VULKAN_SDK} ${CMAKE_SOURCE_DIR}/ThirdParty/vulkansdk)
 find_package(Vulkan REQUIRED)
 
 message(STATUS "==> FindVulkan.cmake path: ${_FINDVULKAN_CMAKE_FILE}")
 
 message("find vulkan : ${Vulkan_FOUND}")
-if (${Vulkan_FOUND})
+
+if(${Vulkan_FOUND})
     message("vulkan libs : ${Vulkan_LIBRARY}")
     copy_specified_files_to_build(FILES ${Vulkan_LIBRARY})
 endif()
@@ -46,6 +47,7 @@ add_custom_target(
 # Assets
 set(ASSETS_SRC_DIR "${CMAKE_SOURCE_DIR}/Assets")
 add_compile_definitions(ASSETS_SRC_DIR="${ASSETS_SRC_DIR}")
+
 # Project
 set(BUILD_SHARED_LIBS ON)
 add_subdirectory(ThirdParty/glfw)
@@ -53,5 +55,6 @@ setup_output_directories(glfw)
 
 add_subdirectory(TestThirdParty)
 add_subdirectory(HelloTriangle)
+add_subdirectory(TextureMapping)
 
 # add_subdirectory(Common)
