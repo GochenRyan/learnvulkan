@@ -34,6 +34,7 @@ struct Vertex
 {
     glm::vec2 pos;
     glm::vec3 color;
+    glm::vec2 texCoord;
 
     /*
         A vertex binding describes at which rate to load data from memory throughout the vertices. 
@@ -54,11 +55,11 @@ struct Vertex
             vk::VertexInputRate::eVertex };
     }
 
-    static std::array<vk::VertexInputAttributeDescription, 2> getAttributeDescriptions()
+    static std::array<vk::VertexInputAttributeDescription, 3> getAttributeDescriptions()
     {
         /*
-            The **binding** parameter tells Vulkan from which binding the per-vertex data comes.
             The **location** parameter references the location directive of the input in the vertex shader.
+            The **binding** parameter tells Vulkan from which binding the per-vertex data comes.
             The **format** parameter describes the type of data for the attribute.
                 float: VK_FORMAT_R32_SFLOAT
                 float2: VK_FORMAT_R32G32_SFLOAT
@@ -73,16 +74,17 @@ struct Vertex
 
         return {
             vk::VertexInputAttributeDescription(0, 0, vk::Format::eR32G32Sfloat, offsetof(Vertex, pos)),
-            vk::VertexInputAttributeDescription(1, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, color))
+            vk::VertexInputAttributeDescription(1, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, color)),
+            vk::VertexInputAttributeDescription(2, 0, vk::Format::eR32G32Sfloat, offsetof(Vertex, texCoord))
         };
     }
 };
 
 const std::vector<Vertex> vertices = {
-    {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},
-    {{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},
-    {{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
-    {{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}}
+    {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, /* from 0, 0 in the top-left corner to 1, 1 in the bottom-right corner. */{1.0f, 0.0f}},
+    {{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
+    {{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
+    {{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}}
 };
 
 const std::vector<uint16_t> indices = {
@@ -176,6 +178,10 @@ private:
     void endSingleTimeCommands(vk::raii::CommandBuffer& commandBuffer);
     void transitionImageLayout(const vk::raii::Image& image, vk::ImageLayout oldLayout, vk::ImageLayout newLayout);
     void copyBufferToImage(const vk::raii::Buffer& buffer, vk::raii::Image& image, uint32_t width, uint32_t height);
+
+    void createTextureImageView();
+    vk::raii::ImageView createImageView(vk::raii::Image& image, vk::Format format);
+    void createTextureSampler();
 private:
     GLFWwindow* window{ nullptr };
 
@@ -236,6 +242,8 @@ private:
 
     vk::raii::Image textureImage = nullptr;
     vk::raii::DeviceMemory textureImageMemory = nullptr;
+    vk::raii::ImageView textureImageView = nullptr;
+    vk::raii::Sampler textureSampler = nullptr;
 public:
     /*
         Although many drivers and platforms trigger VK_ERROR_OUT_OF_DATE_KHR automatically after a window resize, it is not guaranteed to happen. 

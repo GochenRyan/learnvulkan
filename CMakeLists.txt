@@ -37,12 +37,37 @@ if(${Vulkan_FOUND})
     copy_specified_files_to_build(FILES ${Vulkan_LIBRARY})
 endif()
 
+# Find all subdirectories that contain shader.slang
+file(GLOB_RECURSE SHADER_DIRS_LIST
+    "${CMAKE_SOURCE_DIR}/*/*.slang"
+)
+
+# Extract the directory path and remove duplicates
+set(SHADER_DIRS "")
+foreach(shader_file ${SHADER_DIRS_LIST})
+    get_filename_component(shader_dir "${shader_file}" DIRECTORY)
+    list(APPEND SHADER_DIRS "${shader_dir}")
+endforeach()
+
+list(REMOVE_DUPLICATES SHADER_DIRS)
+
+# Define custom goals
 add_custom_target(
     RunScript ALL
-    COMMAND cmd.exe /c "${CMAKE_SOURCE_DIR}/compile.bat ${CMAKE_SOURCE_DIR}/Assets/Shader/HelloTriangle/shader.slang ${CMAKE_SOURCE_DIR}/Assets/Shader/HelloTriangle/slang.spv"
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    COMMENT "Parsing shaders..."
+    COMMENT "Parsing all shaders..."
 )
+
+# Add commands for each directory
+foreach(shader_dir ${SHADER_DIRS})
+    add_custom_command(
+        TARGET RunScript
+        COMMAND cmd.exe /c "${CMAKE_SOURCE_DIR}/compile.bat" 
+            "${shader_dir}/shader.slang" 
+            "${shader_dir}/slang.spv"
+        WORKING_DIRECTORY "${shader_dir}"
+        COMMENT "Parsing shader in: ${shader_dir}"
+    )
+endforeach()
 
 # Assets
 set(ASSETS_SRC_DIR "${CMAKE_SOURCE_DIR}/Assets")

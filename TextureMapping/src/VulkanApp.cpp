@@ -114,28 +114,8 @@ void VulkanApp::createSwapChain()
 
 void VulkanApp::createImageViews()
 {
-    swapChainImageViews.clear();
-
-    /*
-        createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
-        createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
-        createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
-        createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
-
-        Each component (r, g, b, a) in the components field specifies the mapping method of the image color channel.
-        VK_COMPONENT_SWIZZLE_IDENTITY indicates no swapping, that is, the red channel remains red, the green channel remains green, and so on.
-        Vulkan allows the order of image channels to be adjusted through component swapping (Swizzle) without modifying the image data itself. This is very useful in the following scenarios:
-            Format mismatch: When the image format does not match the channel order expected by the shader (for example, the image is stored as BGR, but the shader expects RGB).
-            Monochrome channel: Map multiple channels to the same value (for example, set the Alpha channel as the red channel).
-            Simplify data processing: Avoid preprocessing image data on the CPU side.
-    */
-
-    vk::ImageViewCreateInfo imageViewCreateInfo{
-        .viewType = vk::ImageViewType::e2D,
-        .format = swapChainImageFormat,
-        .subresourceRange = { vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1 }
-    };
-
+    vk::ImageViewCreateInfo imageViewCreateInfo{ .viewType = vk::ImageViewType::e2D, .format = swapChainImageFormat,
+          .subresourceRange = { vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1 } };
     for (auto image : swapChainImages)
     {
         imageViewCreateInfo.image = image;
@@ -173,6 +153,8 @@ void VulkanApp::initVulkan()
     createGraphicPipeline();
     createCommandPool();
     createTextureImage();
+    createTextureImageView();
+    createTextureSampler();
     createVertexBuffer();
     createIndexBuffer();
     createUniformBuffers();
@@ -341,8 +323,9 @@ void VulkanApp::pickPhysicalDevice()
                     });
 
             auto features = device.template getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan13Features, vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>();
-            bool supportsRequiredFeatures = features.template get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering &&
-                features.template get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>().extendedDynamicState;
+            bool supportsRequiredFeatures = features.template get<vk::PhysicalDeviceFeatures2>().features.samplerAnisotropy && 
+                                            features.template get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering &&
+                                            features.template get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>().extendedDynamicState;
 
             return supportsVulkan1_3 && supportsGraphics && supportsAllRequiredExtensions && supportsRequiredFeatures;
         });
@@ -381,7 +364,7 @@ void VulkanApp::createLogicalDevice()
 
     // query for Vulkan 1.3 features
     vk::StructureChain<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan13Features, vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT> featureChain = {
-        {},                                                     // vk::PhysicalDeviceFeatures2
+        {.features = { .samplerAnisotropy = true } },                                                     // vk::PhysicalDeviceFeatures2
         {.synchronization2 = true, .dynamicRendering = true },  // vk::PhysicalDeviceVulkan13Features
         {.extendedDynamicState = true }                         // vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT
     };
@@ -429,7 +412,7 @@ void VulkanApp::createSurface()
 void VulkanApp::createGraphicPipeline()
 {
     //auto shaderCode = readFile("Assets/Shader/HelloTriangle/slang.spv");
-    auto shaderCode = readFile(ASSETS_SRC_DIR "/Shader/HelloTriangle/slang.spv");
+    auto shaderCode = readFile(ASSETS_SRC_DIR "/Shader/TextureMapping/slang.spv");
     vk::raii::ShaderModule shaderModule = createShaderModule(shaderCode);
 
     /*
@@ -1066,16 +1049,25 @@ void VulkanApp::createIndexBuffer()
 */
 void VulkanApp::createDescriptorSetLayout()
 {
-    vk::DescriptorSetLayoutBinding uboLayoutBinding{
-        .binding = 0,
-        .descriptorType = vk::DescriptorType::eUniformBuffer,
-        .descriptorCount = 1,
-        .stageFlags = vk::ShaderStageFlagBits::eVertex,
-        .pImmutableSamplers = nullptr
+    std::array bindings = {
+        vk::DescriptorSetLayoutBinding {
+            .binding = 0,
+            .descriptorType = vk::DescriptorType::eUniformBuffer,
+            .descriptorCount = 1,
+            .stageFlags = vk::ShaderStageFlagBits::eVertex,
+            .pImmutableSamplers = nullptr
+        },
+        vk::DescriptorSetLayoutBinding {
+            .binding = 1,
+            .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+            .descriptorCount = 1,
+            .stageFlags = vk::ShaderStageFlagBits::eFragment,
+            .pImmutableSamplers = nullptr
+        }
     };
     vk::DescriptorSetLayoutCreateInfo layoutInfo{
-        .bindingCount = 1,
-        .pBindings = &uboLayoutBinding
+        .bindingCount = bindings.size(),
+        .pBindings = bindings.data()
     };
     descriptorSetLayout = vk::raii::DescriptorSetLayout(device, layoutInfo);
 }
@@ -1120,12 +1112,21 @@ void VulkanApp::updateUniformBuffer(uint32_t currentFrame)
 
 void VulkanApp::createDescriptorPool()
 {
-    vk::DescriptorPoolSize poolSize(vk::DescriptorType::eUniformBuffer, MAX_FRAMES_IN_FLIGHT);
+    std::array poolSize{
+        vk::DescriptorPoolSize{
+            .type = vk::DescriptorType::eUniformBuffer,
+            .descriptorCount = MAX_FRAMES_IN_FLIGHT
+        },
+        vk::DescriptorPoolSize{
+            .type = vk::DescriptorType::eCombinedImageSampler,
+            .descriptorCount = MAX_FRAMES_IN_FLIGHT
+        }
+    };
     vk::DescriptorPoolCreateInfo poolInfo{
         .flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
         .maxSets = MAX_FRAMES_IN_FLIGHT,
-        .poolSizeCount = 1,
-        .pPoolSizes = &poolSize
+        .poolSizeCount = 2,
+        .pPoolSizes = poolSize.data()
     };
     descriptorPool = vk::raii::DescriptorPool(device, poolInfo);
 }
@@ -1149,30 +1150,47 @@ void VulkanApp::createDescriptorSets()
             .offset = 0,
             .range = sizeof(UniformBufferObject)
         };
-        vk::WriteDescriptorSet descriptorWrite{
-            /*
-*             The first two fields specify the descriptor set to update and the binding. 
-            */
-            .dstSet = descriptorSets[i],
-            // Remember that descriptors can be arrays, so we also need to specify the first index in the array that we want to update. 
-            // We�re not using an array, so the index is simply 0.
-            .dstBinding = 0,
 
-            // It�s possible to update multiple descriptors at once in an array, starting at index dstArrayElement.
-            .dstArrayElement = 0,
-            // The descriptorCount field specifies how many array elements you want to update.
-            .descriptorCount = 1,
-            .descriptorType = vk::DescriptorType::eUniformBuffer,
-            /*
-                 The pBufferInfo field is used for descriptors that refer to buffer data, 
-                 pImageInfo is used for descriptors that refer to image data, 
-                 and pTexelBufferView is used for descriptors that refer to buffer views. 
-                 Our descriptor is based on buffers, so we�re using pBufferInfo.
-            */
-            .pBufferInfo = &bufferInfo
+        vk::DescriptorImageInfo imageInfo{
+            .sampler = textureSampler,
+            .imageView = textureImageView,
+            .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal
         };
 
-        device.updateDescriptorSets(descriptorWrite, {});
+        std::array descriptorWrites{
+            vk::WriteDescriptorSet{
+                /*
+    *             The first two fields specify the descriptor set to update and the binding.
+                */
+                .dstSet = descriptorSets[i],
+                // Remember that descriptors can be arrays, so we also need to specify the first index in the array that we want to update. 
+                // We're not using an array, so the index is simply 0.
+                .dstBinding = 0,
+
+                // It's possible to update multiple descriptors at once in an array, starting at index dstArrayElement.
+                .dstArrayElement = 0,
+                // The descriptorCount field specifies how many array elements you want to update.
+                .descriptorCount = 1,
+                .descriptorType = vk::DescriptorType::eUniformBuffer,
+                /*
+                     The pBufferInfo field is used for descriptors that refer to buffer data,
+                     pImageInfo is used for descriptors that refer to image data,
+                     and pTexelBufferView is used for descriptors that refer to buffer views.
+                     Our descriptor is based on buffers, so we�re using pBufferInfo.
+                */
+                .pBufferInfo = &bufferInfo
+            },
+            vk::WriteDescriptorSet{
+                .dstSet = descriptorSets[i],
+                .dstBinding = 1,
+                .dstArrayElement = 0,
+                .descriptorCount = 1,
+                .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+                .pImageInfo = &imageInfo
+            }
+        };
+
+        device.updateDescriptorSets(descriptorWrites, {});
     }
 }
 
@@ -1357,4 +1375,87 @@ void VulkanApp::copyBufferToImage(const vk::raii::Buffer& buffer, vk::raii::Imag
     };
     commandBuffer.copyBufferToImage(buffer, image, vk::ImageLayout::eTransferDstOptimal, {region});
     endSingleTimeCommands(commandBuffer);
+}
+
+void VulkanApp::createTextureImageView()
+{
+    textureImageView = createImageView(textureImage, vk::Format::eR8G8B8A8Srgb);
+}
+
+vk::raii::ImageView VulkanApp::createImageView(vk::raii::Image& image, vk::Format format)
+{
+    /*
+        createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+        createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+        createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+        createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+
+        Each component (r, g, b, a) in the components field specifies the mapping method of the image color channel.
+        VK_COMPONENT_SWIZZLE_IDENTITY indicates no swapping, that is, the red channel remains red, the green channel remains green, and so on.
+        Vulkan allows the order of image channels to be adjusted through component swapping (Swizzle) without modifying the image data itself. This is very useful in the following scenarios:
+            Format mismatch: When the image format does not match the channel order expected by the shader (for example, the image is stored as BGR, but the shader expects RGB).
+            Monochrome channel: Map multiple channels to the same value (for example, set the Alpha channel as the red channel).
+            Simplify data processing: Avoid preprocessing image data on the CPU side.
+    */
+
+    vk::ImageViewCreateInfo viewInfo{
+        .image = image,
+        .viewType = vk::ImageViewType::e2D,
+        .format = format,
+        .subresourceRange = {
+            .aspectMask = vk::ImageAspectFlagBits::eColor,
+            .baseMipLevel = 0,
+            .levelCount = 1,
+            .baseArrayLayer = 0,
+            .layerCount = 1
+        }
+    };
+
+    return vk::raii::ImageView(device, viewInfo);
+}
+
+void VulkanApp::createTextureSampler()
+{
+    vk::PhysicalDeviceProperties properties = physicalDevice.getProperties();
+    vk::SamplerCreateInfo samplerInfo{
+        // Magnification concerns the oversampling problem describes above, and minification concerns undersampling. 
+        .magFilter = vk::Filter::eLinear,
+        .minFilter = vk::Filter::eLinear,
+
+        .mipmapMode = vk::SamplerMipmapMode::eLinear,
+
+        /*
+            VK_SAMPLER_ADDRESS_MODE_REPEAT: Repeat the texture when going beyond the image dimensions.
+            VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT: Like repeat, but inverts the coordinates to mirror the image when going beyond the dimensions.
+            VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE: Take the color of the edge closest to the coordinate beyond the image dimensions.
+            VK_SAMPLER_ADDRESS_MODE_MIRROR_CLAMP_TO_EDGE: Like clamp to edge, but instead uses the edge opposite to the closest edge.
+            VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER: Return a solid color when sampling beyond the dimensions of the image.
+        */
+        .addressModeU = vk::SamplerAddressMode::eRepeat,
+        .addressModeV = vk::SamplerAddressMode::eRepeat,
+        .addressModeW = vk::SamplerAddressMode::eRepeat,
+
+        .mipLodBias = 0,
+        .anisotropyEnable = vk::True,
+        .maxAnisotropy = properties.limits.maxSamplerAnisotropy,
+
+        /*
+            If a comparison function is enabled, then texels will first be compared to a value, and the result of that comparison is used in filtering operations. 
+            This is mainly used for percentage-closer filtering on shadow maps.
+        */
+        .compareEnable = vk::False,
+        .compareOp = vk::CompareOp::eAlways,
+        /*
+            The borderColor field specifies which color is returned when sampling beyond the image with clamp to border addressing mode. 
+            It is possible to return black, white or transparent in either float or int formats. You cannot specify an arbitrary color.
+        */
+        .borderColor = vk::BorderColor::eIntOpaqueBlack,
+        /*
+            The unnormalizedCoordinates field specifies which coordinate system you want to use to address texels in an image. 
+            If this field is VK_TRUE, then you can simply use coordinates within the [0, texWidth) and [0, texHeight) range. If it is VK_FALSE, then the texels are addressed using the [0, 1) range on all axes. 
+            Real-world applications almost always use normalized coordinates, because then it’s possible to use textures of varying resolutions with the exact same coordinates.
+        */
+        .unnormalizedCoordinates = vk::False
+    };
+    textureSampler = vk::raii::Sampler(device, samplerInfo);
 }
