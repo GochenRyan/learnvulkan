@@ -1,4 +1,4 @@
-#include <TextureMapping/VulkanApp.h>
+#include <DepthBuffering/VulkanApp.h>
 #include <chrono>
 #include <format>
 #include <fstream>
@@ -152,6 +152,7 @@ void VulkanApp::initVulkan()
     createDescriptorSetLayout();
     createGraphicPipeline();
     createCommandPool();
+    createDepthResources();
     createTextureImage();
     createTextureImageView();
     createTextureSampler();
@@ -412,7 +413,7 @@ void VulkanApp::createSurface()
 void VulkanApp::createGraphicPipeline()
 {
     //auto shaderCode = readFile("Assets/Shader/HelloTriangle/slang.spv");
-    auto shaderCode = readFile(ASSETS_SRC_DIR "/Shader/TextureMapping/slang.spv");
+    auto shaderCode = readFile(ASSETS_SRC_DIR "/Shader/DepthBuffering/slang.spv");
     vk::raii::ShaderModule shaderModule = createShaderModule(shaderCode);
 
     /*
@@ -441,7 +442,7 @@ void VulkanApp::createGraphicPipeline()
     vk::PipelineVertexInputStateCreateInfo vertexInputInfo{
         .vertexBindingDescriptionCount = 1,
         .pVertexBindingDescriptions = &bindingDescription,
-        .vertexAttributeDescriptionCount = attributeDescriptions.size(),
+        .vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size()),
         .pVertexAttributeDescriptions = attributeDescriptions.data()
     };
     /*
@@ -453,7 +454,8 @@ void VulkanApp::createGraphicPipeline()
             VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP: the second and third vertex of every triangle is used as first two vertices of the next triangle
     */
     vk::PipelineInputAssemblyStateCreateInfo inputAssembly{
-        .topology = vk::PrimitiveTopology::eTriangleList
+        .topology = vk::PrimitiveTopology::eTriangleList,
+        .primitiveRestartEnable = vk::False
     };
 
     /*vk::Viewport viewport{
@@ -498,6 +500,14 @@ void VulkanApp::createGraphicPipeline()
         .sampleShadingEnable = vk::False 
     };
 
+    vk::PipelineDepthStencilStateCreateInfo depthStencil{
+        .depthTestEnable = vk::True,
+        .depthWriteEnable = vk::True,
+        .depthCompareOp = vk::CompareOp::eLess,
+        .depthBoundsTestEnable = vk::False,
+        .stencilTestEnable = vk::False
+    };
+
     vk::PipelineColorBlendAttachmentState colorBlendAttachment{
         .blendEnable = vk::False,
         .srcColorBlendFactor = vk::BlendFactor::eSrcAlpha,
@@ -512,7 +522,8 @@ void VulkanApp::createGraphicPipeline()
         .logicOpEnable = vk::False, 
         .logicOp = vk::LogicOp::eCopy, 
         .attachmentCount = 1, 
-        .pAttachments = &colorBlendAttachment };
+        .pAttachments = &colorBlendAttachment 
+    };
 
     /*
         Uniform values need to be specified during pipeline creation by creating a VkPipelineLayout object. 
@@ -525,9 +536,11 @@ void VulkanApp::createGraphicPipeline()
     };
     pipelineLayout = vk::raii::PipelineLayout(device, pipelineLayoutInfo);
 
+    vk::Format depthFormat = findDepthFormat();
     vk::PipelineRenderingCreateInfo pipelineRenderingInfo{
         .colorAttachmentCount = 1,
-        .pColorAttachmentFormats = &swapChainImageFormat
+        .pColorAttachmentFormats = &swapChainImageFormat,
+        .depthAttachmentFormat = depthFormat
     };
 
     /*
@@ -544,6 +557,7 @@ void VulkanApp::createGraphicPipeline()
         .pViewportState = &viewportStateInfo,
         .pRasterizationState = &rasterizerInfo,
         .pMultisampleState = &multisamplingInfo,
+        .pDepthStencilState = &depthStencil,
         .pColorBlendState = &colorBlendingInfo,
         .pDynamicState = &dynamicStateInfo,
         .layout = *pipelineLayout,
@@ -616,6 +630,7 @@ void VulkanApp::createCommandPool()
 
 void VulkanApp::createCommandBuffers()
 {
+    commandBuffers.clear();
     vk::CommandBufferAllocateInfo allocInfo{
         .commandPool = commandPool,
         .level = vk::CommandBufferLevel::ePrimary,
@@ -639,8 +654,34 @@ void VulkanApp::recordCommandBuffer(uint32_t imageIndex)
         vk::PipelineStageFlagBits2::eColorAttachmentOutput
     );
 
+    // Transition depth image to depth attachment optimal layout
+    vk::ImageMemoryBarrier2 depthBarrier = {
+        .srcStageMask = vk::PipelineStageFlagBits2::eTopOfPipe,
+        .srcAccessMask = {},
+        .dstStageMask = vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests,
+        .dstAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentRead | vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
+        .oldLayout = vk::ImageLayout::eUndefined,
+        .newLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .image = depthImage,
+        .subresourceRange = {
+            .aspectMask = vk::ImageAspectFlagBits::eDepth,
+            .baseMipLevel = 0,
+            .levelCount = 1,
+            .baseArrayLayer = 0,
+            .layerCount = 1
+        }
+    };
+    vk::DependencyInfo depthDependencyInfo = {
+            .dependencyFlags = {},
+            .imageMemoryBarrierCount = 1,
+            .pImageMemoryBarriers = &depthBarrier
+    };
+    commandBuffers[currentFrame].pipelineBarrier2(depthDependencyInfo);
+
     vk::ClearValue clearColor = vk::ClearColorValue(0.0f, 0.0f, 0.0f, 1.0f);
-    vk::RenderingAttachmentInfo attachmentInfo = {
+    vk::RenderingAttachmentInfo colorAttachmentInfo = {
         .imageView = swapChainImageViews[imageIndex],
         .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
         .loadOp = vk::AttachmentLoadOp::eClear,
@@ -648,19 +689,29 @@ void VulkanApp::recordCommandBuffer(uint32_t imageIndex)
         .clearValue = clearColor
     };
 
+    vk::ClearValue clearDepth = vk::ClearDepthStencilValue(1.0f, 0);
+    vk::RenderingAttachmentInfo depthAttachmentInfo = {
+            .imageView = depthImageView,
+            .imageLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal,
+            .loadOp = vk::AttachmentLoadOp::eClear,
+            .storeOp = vk::AttachmentStoreOp::eDontCare,
+            .clearValue = clearDepth
+    };
+
     vk::RenderingInfo renderingInfo = {
         .renderArea = {.offset = { 0, 0 }, .extent = swapChainExtent },
         .layerCount = 1,
         .colorAttachmentCount = 1,
-        .pColorAttachments = &attachmentInfo
+        .pColorAttachments = &colorAttachmentInfo,
+        .pDepthAttachment = &depthAttachmentInfo
     };
 
     commandBuffers[currentFrame].beginRendering(renderingInfo);
     commandBuffers[currentFrame].bindPipeline(vk::PipelineBindPoint::eGraphics, *graphicsPipeline);
-    commandBuffers[currentFrame].bindVertexBuffers(0, *vertexBuffer, { 0 });
-    commandBuffers[currentFrame].bindIndexBuffer(*indexBuffer, 0, vk::IndexType::eUint16);
     commandBuffers[currentFrame].setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(swapChainExtent.width), static_cast<float>(swapChainExtent.height), 0.0f, 1.0f));
     commandBuffers[currentFrame].setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), swapChainExtent));
+    commandBuffers[currentFrame].bindVertexBuffers(0, *vertexBuffer, { 0 });
+    commandBuffers[currentFrame].bindIndexBuffer(*indexBuffer, 0, vk::IndexType::eUint16);
     commandBuffers[currentFrame].bindDescriptorSets(
         // Unlike vertex and index buffers, descriptor sets are not unique to graphics pipelines. Therefore, we need to specify if we want to bind descriptor sets to the graphics or compute pipeline. 
         vk::PipelineBindPoint::eGraphics, 
@@ -865,6 +916,7 @@ void VulkanApp::recreateSwapChain()
     cleanupSwapChain();
     createSwapChain();
     createImageViews();
+    createDepthResources();
 }
 
 void VulkanApp::cleanupSwapChain()
@@ -994,9 +1046,9 @@ void VulkanApp::createBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage, vk
 
 void VulkanApp::copyBuffer(vk::raii::Buffer& srcBuffer, vk::raii::Buffer& dstBuffer, vk::DeviceSize size)
 {
-    vk::raii::CommandBuffer commandCopyBuffer = beginSingleTimeCommands();
-    commandCopyBuffer.copyBuffer(srcBuffer, dstBuffer, vk::BufferCopy(0, 0, size));
-    endSingleTimeCommands(commandCopyBuffer);
+    auto commandCopyBuffer = beginSingleTimeCommands();
+    commandCopyBuffer->copyBuffer(srcBuffer, dstBuffer, vk::BufferCopy(0, 0, size));
+    endSingleTimeCommands(*commandCopyBuffer);
 }
 
 void VulkanApp::createIndexBuffer()
@@ -1066,7 +1118,7 @@ void VulkanApp::createDescriptorSetLayout()
         }
     };
     vk::DescriptorSetLayoutCreateInfo layoutInfo{
-        .bindingCount = bindings.size(),
+        .bindingCount = static_cast<uint32_t>(bindings.size()),
         .pBindings = bindings.data()
     };
     descriptorSetLayout = vk::raii::DescriptorSetLayout(device, layoutInfo);
@@ -1095,7 +1147,7 @@ void VulkanApp::updateUniformBuffer(uint32_t currentFrame)
     static auto startTime = std::chrono::high_resolution_clock::now();
 
     auto currentTime = std::chrono::high_resolution_clock::now();
-    float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
+    float time = std::chrono::duration<float>(currentTime - startTime).count();
 
     UniformBufferObject ubo{};
     // The glm::rotate function takes an existing transformation, rotation angle and rotation axis as parameters.
@@ -1264,17 +1316,19 @@ void VulkanApp::createImage(uint32_t width, uint32_t height, vk::Format format, 
     image.bindMemory(imageMemory, 0);
 }
 
-vk::raii::CommandBuffer VulkanApp::beginSingleTimeCommands()
+std::unique_ptr<vk::raii::CommandBuffer> VulkanApp::beginSingleTimeCommands()
 {
     vk::CommandBufferAllocateInfo allocInfo{
-        .commandPool = commandPool,
-        .level = vk::CommandBufferLevel::ePrimary,
-        .commandBufferCount = 1
+            .commandPool = commandPool,
+            .level = vk::CommandBufferLevel::ePrimary,
+            .commandBufferCount = 1
     };
-    vk::raii::CommandBuffer commandBuffer = std::move(vk::raii::CommandBuffers(device, allocInfo).front());
-    commandBuffer.begin(vk::CommandBufferBeginInfo{
+    std::unique_ptr<vk::raii::CommandBuffer> commandBuffer = std::make_unique<vk::raii::CommandBuffer>(std::move(vk::raii::CommandBuffers(device, allocInfo).front()));
+
+    vk::CommandBufferBeginInfo beginInfo{
         .flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit
-    });
+    };
+    commandBuffer->begin(beginInfo);
 
     return commandBuffer;
 }
@@ -1332,7 +1386,7 @@ void VulkanApp::transitionImageLayout(const vk::raii::Image& image, vk::ImageLay
     {
         throw std::invalid_argument("unsupported layout transition!");
     }
-    commandBuffer.pipelineBarrier(
+    commandBuffer->pipelineBarrier(
         /*
             https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/chap7.html#synchronization-access-types-supported
         */
@@ -1340,7 +1394,7 @@ void VulkanApp::transitionImageLayout(const vk::raii::Image& image, vk::ImageLay
         sourceStage, 
         // The second parameter specifies the pipeline stage in which operations will wait on the barrier. 
         destinationStage, {}, {}, nullptr, barrier);
-    endSingleTimeCommands(commandBuffer);
+    endSingleTimeCommands(*commandBuffer);
 }
 
 void VulkanApp::copyBufferToImage(const vk::raii::Buffer& buffer, vk::raii::Image& image, uint32_t width, uint32_t height)
@@ -1373,16 +1427,16 @@ void VulkanApp::copyBufferToImage(const vk::raii::Buffer& buffer, vk::raii::Imag
             .depth = 1
         }
     };
-    commandBuffer.copyBufferToImage(buffer, image, vk::ImageLayout::eTransferDstOptimal, {region});
-    endSingleTimeCommands(commandBuffer);
+    commandBuffer->copyBufferToImage(buffer, image, vk::ImageLayout::eTransferDstOptimal, {region});
+    endSingleTimeCommands(*commandBuffer);
 }
 
 void VulkanApp::createTextureImageView()
 {
-    textureImageView = createImageView(textureImage, vk::Format::eR8G8B8A8Srgb);
+    textureImageView = createImageView(textureImage, vk::Format::eR8G8B8A8Srgb, vk::ImageAspectFlagBits::eColor);
 }
 
-vk::raii::ImageView VulkanApp::createImageView(vk::raii::Image& image, vk::Format format)
+vk::raii::ImageView VulkanApp::createImageView(vk::raii::Image& image, vk::Format format, vk::ImageAspectFlags aspectFlags)
 {
     /*
         createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
@@ -1403,7 +1457,7 @@ vk::raii::ImageView VulkanApp::createImageView(vk::raii::Image& image, vk::Forma
         .viewType = vk::ImageViewType::e2D,
         .format = format,
         .subresourceRange = {
-            .aspectMask = vk::ImageAspectFlagBits::eColor,
+            .aspectMask = aspectFlags,
             .baseMipLevel = 0,
             .levelCount = 1,
             .baseArrayLayer = 0,
@@ -1458,4 +1512,42 @@ void VulkanApp::createTextureSampler()
         .unnormalizedCoordinates = vk::False
     };
     textureSampler = vk::raii::Sampler(device, samplerInfo);
+}
+
+void VulkanApp::createDepthResources()
+{
+    vk::Format depthFormat = findDepthFormat();
+
+    createImage(swapChainExtent.width, swapChainExtent.height, depthFormat, vk::ImageTiling::eOptimal, vk::ImageUsageFlagBits::eDepthStencilAttachment, vk::MemoryPropertyFlagBits::eDeviceLocal, depthImage, depthImageMemory);
+    depthImageView = createImageView(depthImage, depthFormat, vk::ImageAspectFlagBits::eDepth);
+}
+
+vk::Format VulkanApp::findSupportedFormat(const std::vector<vk::Format>& candidates, vk::ImageTiling tiling, vk::FormatFeatureFlags features)
+{
+    for (const auto format : candidates) {
+        vk::FormatProperties props = physicalDevice.getFormatProperties(format);
+
+        if (tiling == vk::ImageTiling::eLinear && (props.linearTilingFeatures & features) == features) {
+            return format;
+        }
+        if (tiling == vk::ImageTiling::eOptimal && (props.optimalTilingFeatures & features) == features) {
+            return format;
+        }
+    }
+
+    throw std::runtime_error("failed to find supported format!");
+}
+
+vk::Format VulkanApp::findDepthFormat()
+{
+    return findSupportedFormat(
+        { vk::Format::eD32Sfloat, vk::Format::eD32SfloatS8Uint, vk::Format::eD24UnormS8Uint },
+        vk::ImageTiling::eOptimal,
+        vk::FormatFeatureFlagBits::eDepthStencilAttachment
+    );
+}
+
+bool VulkanApp::hasStencilComponent(vk::Format format)
+{
+    return format == vk::Format::eD32SfloatS8Uint || format == vk::Format::eD24UnormS8Uint;
 }

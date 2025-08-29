@@ -81,5 +81,6 @@ setup_output_directories(glfw)
 add_subdirectory(TestThirdParty)
 add_subdirectory(HelloTriangle)
 add_subdirectory(TextureMapping)
+add_subdirectory(DepthBuffering)
 
 # add_subdirectory(Common)
