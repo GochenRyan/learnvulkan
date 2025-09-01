@@ -10,6 +10,7 @@ add_definitions(-DUNICODE)
 include(cmake/OutputDirectories.cmake)
 include(cmake/CopyFilesToBinary.cmake)
 include(cmake/CopySpecifiedFilesToBuild.cmake)
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake/Modules")
 
 if(PROJECT_BINARY_DIR STREQUAL PROJECT_SOURCE_DIR)
     message(WARNING "The Binary directory of CMake cannot be the same as source directory!")
@@ -69,9 +70,14 @@ foreach(shader_dir ${SHADER_DIRS})
     )
 endforeach()
 
+set(FBXSDK_LIB_DIR ${CMAKE_SOURCE_DIR}/ThirdParty/fbxsdk/lib)
+find_package(FBXSDK REQUIRED)
+
 # Assets
 set(ASSETS_SRC_DIR "${CMAKE_SOURCE_DIR}/Assets")
 add_compile_definitions(ASSETS_SRC_DIR="${ASSETS_SRC_DIR}")
+
+copy_all_files_to_build(${FBXSDK_LIB_DIR})
 
 # Project
 set(BUILD_SHARED_LIBS ON)
@@ -82,5 +88,6 @@ add_subdirectory(TestThirdParty)
 add_subdirectory(HelloTriangle)
 add_subdirectory(TextureMapping)
 add_subdirectory(DepthBuffering)
+add_subdirectory(LoadingModel)
 
 # add_subdirectory(Common)
