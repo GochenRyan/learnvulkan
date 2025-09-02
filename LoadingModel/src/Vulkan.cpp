@@ -416,7 +416,7 @@ void VulkanApp::createSurface()
 void VulkanApp::createGraphicPipeline()
 {
     //auto shaderCode = readFile("Assets/Shader/HelloTriangle/slang.spv");
-    auto shaderCode = readFile(ASSETS_SRC_DIR "/Shader/DepthBuffering/slang.spv");
+    auto shaderCode = readFile(ASSETS_SRC_DIR "/Shader/LoadingModel/slang.spv");
     vk::raii::ShaderModule shaderModule = createShaderModule(shaderCode);
 
     /*
@@ -1155,12 +1155,12 @@ void VulkanApp::updateUniformBuffer(uint32_t currentFrame)
     UniformBufferObject ubo{};
     // The glm::rotate function takes an existing transformation, rotation angle and rotation axis as parameters.
     ubo.model = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-    // For the view transformation I�ve decided to look at the geometry from above at a 45 degree angle. The glm::lookAt function takes the eye position, center position and up axis as parameters.
+    // For the view transformation I've decided to look at the geometry from above at a 45 degree angle. The glm::lookAt function takes the eye position, center position and up axis as parameters.
     ubo.view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-    // I�ve chosen to use a perspective projection with a 45 degree vertical field-of-view. The other parameters are the aspect ratio, near and far view planes. 
+    // I've chosen to use a perspective projection with a 45 degree vertical field-of-view. The other parameters are the aspect ratio, near and far view planes. 
     ubo.proj = glm::perspective(glm::radians(45.0f), static_cast<float>(swapChainExtent.width) / static_cast<float>(swapChainExtent.height), 0.1f, 10.0f);
     // GLM was originally designed for OpenGL, where the Y coordinate of the clip coordinates is inverted. The easiest way to compensate for that is to flip the sign on the scaling factor of the Y axis in the projection matrix. 
-    // If you don�t do this, then the image will be rendered upside down.
+    // If you don't do this, then the image will be rendered upside down.
     ubo.proj[1][1] *= -1;
     memcpy(uniformBuffersMapped[currentFrame], &ubo, sizeof(ubo));
 }
@@ -1558,7 +1558,7 @@ bool VulkanApp::hasStencilComponent(vk::Format format)
 
 bool VulkanApp::loadModel()
 {
-    bool flipV = false;
+    bool flipV = true;
 
     std::string modelPath = ASSETS_SRC_DIR "/Model/kris-light-world-form-deltarune/source/kris.fbx";
 
@@ -1644,6 +1644,12 @@ bool VulkanApp::loadModel()
             colorElement = mesh->GetElementVertexColor(0);
         }
 
+        FbxGeometryElementNormal* normalElement = nullptr;
+        if (mesh->GetElementNormalCount() > 0)
+        {
+            normalElement = mesh->GetElementNormal(0);
+        }
+
         int polygonVertexIndex = 0;
         for (int p = 0; p < polygonCount; ++p)
         {
@@ -1688,13 +1694,15 @@ bool VulkanApp::loadModel()
 
                 if (colorElement) {
                     FbxColor c;
-                    if (colorElement->GetMappingMode() == FbxGeometryElement::eByControlPoint) {
+                    if (colorElement->GetMappingMode() == FbxGeometryElement::eByControlPoint) 
+                    {
                         int index = (colorElement->GetReferenceMode() == FbxGeometryElement::eDirect)
                             ? controlPointIndex
                             : colorElement->GetIndexArray().GetAt(controlPointIndex);
                         c = colorElement->GetDirectArray().GetAt(index);
                     }
-                    else if (colorElement->GetMappingMode() == FbxGeometryElement::eByPolygonVertex) {
+                    else if (colorElement->GetMappingMode() == FbxGeometryElement::eByPolygonVertex) 
+                    {
                         int index = (colorElement->GetReferenceMode() == FbxGeometryElement::eDirect)
                             ? polygonVertexIndex
                             : colorElement->GetIndexArray().GetAt(polygonVertexIndex);
@@ -1705,8 +1713,33 @@ bool VulkanApp::loadModel()
                     }
                     vert.color = glm::vec3(static_cast<float>(c.mRed), static_cast<float>(c.mGreen), static_cast<float>(c.mBlue));
                 }
-                else {
+                else 
+                {
                     vert.color = glm::vec3(1.0f, 1.0f, 1.0f);
+                }
+
+                if (normalElement)
+                {
+                    FbxVector4 n;
+                    if (normalElement->GetMappingMode() == FbxGeometryElement::eByControlPoint)
+                    {
+                        int index = (normalElement->GetReferenceMode() == FbxGeometryElement::eDirect)
+                            ? controlPointIndex
+                            : normalElement->GetIndexArray().GetAt(controlPointIndex);
+                        n = normalElement->GetDirectArray().GetAt(index);
+                    }
+                    else if (normalElement->GetMappingMode() == FbxGeometryElement::eByPolygonVertex) 
+                    {
+                        int index = (normalElement->GetReferenceMode() == FbxGeometryElement::eDirect)
+                            ? polygonVertexIndex
+                            : normalElement->GetIndexArray().GetAt(polygonVertexIndex);
+                        n = normalElement->GetDirectArray().GetAt(index);
+                    }
+                    else
+                    {
+                        n = FbxVector4(0.0f, 1.0f, 0.0f, 1.0f);
+                    }
+                    vert.norm = glm::vec3(static_cast<float>(n[0]), static_cast<float>(n[1]), static_cast<float>(n[2]));
                 }
 
                 // Remove duplicates or create new vertices

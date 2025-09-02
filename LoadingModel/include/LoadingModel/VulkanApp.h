@@ -37,6 +37,7 @@ struct Vertex
 {
     glm::vec3 pos;
     glm::vec3 color;
+    glm::vec3 norm;
     glm::vec2 texCoord;
 
     /*
@@ -58,7 +59,7 @@ struct Vertex
             vk::VertexInputRate::eVertex };
     }
 
-    static std::array<vk::VertexInputAttributeDescription, 3> getAttributeDescriptions()
+    static std::array<vk::VertexInputAttributeDescription, 4> getAttributeDescriptions()
     {
         /*
             The **location** parameter references the location directive of the input in the vertex shader.
@@ -78,7 +79,8 @@ struct Vertex
         return {
             vk::VertexInputAttributeDescription(0, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, pos)),
             vk::VertexInputAttributeDescription(1, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, color)),
-            vk::VertexInputAttributeDescription(2, 0, vk::Format::eR32G32Sfloat, offsetof(Vertex, texCoord))
+            vk::VertexInputAttributeDescription(2, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, norm)),
+            vk::VertexInputAttributeDescription(3, 0, vk::Format::eR32G32Sfloat, offsetof(Vertex, texCoord))
         };
     }
 };
@@ -93,12 +95,33 @@ struct VertexHash
 {
     size_t operator()(const Vertex& v) const noexcept
     {
-        uint64_t h1 = ((uint64_t)floatToBits(v.pos.x) << 32) ^ floatToBits(v.pos.y);
-        uint64_t h2 = ((uint64_t)floatToBits(v.pos.z) << 32) ^ floatToBits(v.texCoord.x);
-        uint64_t h3 = ((uint64_t)floatToBits(v.texCoord.y) << 32) ^ floatToBits(v.color.x);
-        uint64_t h4 = ((uint64_t)floatToBits(v.color.y) << 32) ^ floatToBits(v.color.z);
-        uint64_t h = h1 ^ (h2 * 11400714819323198485ull) ^ (h3 * 14029467366897019727ull) ^ (h4 * 1609587929392839161ull);
-        return (size_t)h;
+        // Each group combines two 32-bit floats into one 64-bit and then mixes them with constants
+        uint64_t h1 = (static_cast<uint64_t>(floatToBits(v.pos.x)) << 32) ^ floatToBits(v.pos.y);
+        uint64_t h2 = (static_cast<uint64_t>(floatToBits(v.pos.z)) << 32) ^ floatToBits(v.texCoord.x);
+        uint64_t h3 = (static_cast<uint64_t>(floatToBits(v.texCoord.y)) << 32) ^ floatToBits(v.color.x);
+        uint64_t h4 = (static_cast<uint64_t>(floatToBits(v.color.y)) << 32) ^ floatToBits(v.color.z);
+        uint64_t h5 = (static_cast<uint64_t>(floatToBits(v.norm.x)) << 32) ^ floatToBits(v.norm.y);
+        uint64_t h6 = static_cast<uint64_t>(floatToBits(v.norm.z));
+
+        // Commonly used 64-bit mixing constants (derived from splitmix64 / PCG, etc.) can be replaced with other seeds
+        const uint64_t C1 = 11400714819323198485ull;
+        const uint64_t C2 = 14029467366897019727ull;
+        const uint64_t C3 = 1609587929392839161ull;
+        const uint64_t C4 = 9650029242287828579ull;
+
+        uint64_t h = h1;
+        h ^= h2 * C1;
+        h ^= h3 * C2;
+        h ^= h4 * C3;
+        h ^= h5 * C4;
+        h ^= h6 * (C1 ^ C2);
+
+        // Finally, perform point dispersion (optional)
+        h = (h ^ (h >> 30)) * 0xbf58476d1ce4e5b9ull;
+        h = (h ^ (h >> 27)) * 0x94d049bb133111ebull;
+        h = h ^ (h >> 31);
+
+        return static_cast<size_t>(h);
     }
 };
 
@@ -113,7 +136,10 @@ struct VertexEqual
                 floatToBits(a.texCoord.y) == floatToBits(b.texCoord.y) &&
                 floatToBits(a.color.x) == floatToBits(b.color.x) &&
                 floatToBits(a.color.y) == floatToBits(b.color.y) &&
-                floatToBits(a.color.z) == floatToBits(b.color.z);
+                floatToBits(a.color.z) == floatToBits(b.color.z) &&
+                floatToBits(a.norm.x) == floatToBits(b.norm.x) &&
+                floatToBits(a.norm.y) == floatToBits(b.norm.y) &&
+                floatToBits(a.norm.z) == floatToBits(b.norm.z);
     }
 };
 

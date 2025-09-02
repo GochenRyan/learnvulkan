@@ -1,4 +1,4 @@
-#include <DepthBUffering/VulkanApp.h>
+#include <DepthBuffering/VulkanApp.h>
 #include <iostream>
 
 int main()
