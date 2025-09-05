@@ -1,4 +1,4 @@
-#include <TextureMapping/VulkanApp.h>
+#include <DeferredRendering/VulkanApp.h>
 #include <chrono>
 #include <format>
 #include <fstream>
@@ -8,6 +8,8 @@
 
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
+
+#include <fbxsdk.h>
 
 static VKAPI_ATTR vk::Bool32 VKAPI_CALL debugCallback(vk::DebugUtilsMessageSeverityFlagBitsEXT severity, vk::DebugUtilsMessageTypeFlagsEXT type, const vk::DebugUtilsMessengerCallbackDataEXT* pCallbackData, void*) {
     if (severity == vk::DebugUtilsMessageSeverityFlagBitsEXT::eError || severity == vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning) {
@@ -149,12 +151,16 @@ void VulkanApp::initVulkan()
     createLogicalDevice();
     createSwapChain();
     createImageViews();
+    createRenderPass();
     createDescriptorSetLayout();
     createGraphicPipeline();
     createCommandPool();
+    createDepthResources();
+    createFramebuffers();
     createTextureImage();
     createTextureImageView();
     createTextureSampler();
+    loadModel();
     createVertexBuffer();
     createIndexBuffer();
     createUniformBuffers();
@@ -324,7 +330,7 @@ void VulkanApp::pickPhysicalDevice()
 
             auto features = device.template getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan13Features, vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>();
             bool supportsRequiredFeatures = features.template get<vk::PhysicalDeviceFeatures2>().features.samplerAnisotropy && 
-                                            features.template get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering &&
+                                            //features.template get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering &&
                                             features.template get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>().extendedDynamicState;
 
             return supportsVulkan1_3 && supportsGraphics && supportsAllRequiredExtensions && supportsRequiredFeatures;
@@ -365,7 +371,7 @@ void VulkanApp::createLogicalDevice()
     // query for Vulkan 1.3 features
     vk::StructureChain<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan13Features, vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT> featureChain = {
         {.features = { .samplerAnisotropy = true } },                                                     // vk::PhysicalDeviceFeatures2
-        {.synchronization2 = true, .dynamicRendering = true },  // vk::PhysicalDeviceVulkan13Features
+        {.synchronization2 = true, .dynamicRendering = false },  // vk::PhysicalDeviceVulkan13Features
         {.extendedDynamicState = true }                         // vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT
     };
 
@@ -412,7 +418,7 @@ void VulkanApp::createSurface()
 void VulkanApp::createGraphicPipeline()
 {
     //auto shaderCode = readFile("Assets/Shader/HelloTriangle/slang.spv");
-    auto shaderCode = readFile(ASSETS_SRC_DIR "/Shader/TextureMapping/slang.spv");
+    auto shaderCode = readFile(ASSETS_SRC_DIR "/Shader/LoadingModel/slang.spv");
     vk::raii::ShaderModule shaderModule = createShaderModule(shaderCode);
 
     /*
@@ -441,7 +447,7 @@ void VulkanApp::createGraphicPipeline()
     vk::PipelineVertexInputStateCreateInfo vertexInputInfo{
         .vertexBindingDescriptionCount = 1,
         .pVertexBindingDescriptions = &bindingDescription,
-        .vertexAttributeDescriptionCount = attributeDescriptions.size(),
+        .vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size()),
         .pVertexAttributeDescriptions = attributeDescriptions.data()
     };
     /*
@@ -453,7 +459,8 @@ void VulkanApp::createGraphicPipeline()
             VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP: the second and third vertex of every triangle is used as first two vertices of the next triangle
     */
     vk::PipelineInputAssemblyStateCreateInfo inputAssembly{
-        .topology = vk::PrimitiveTopology::eTriangleList
+        .topology = vk::PrimitiveTopology::eTriangleList,
+        .primitiveRestartEnable = vk::False
     };
 
     /*vk::Viewport viewport{
@@ -498,6 +505,14 @@ void VulkanApp::createGraphicPipeline()
         .sampleShadingEnable = vk::False 
     };
 
+    vk::PipelineDepthStencilStateCreateInfo depthStencil{
+        .depthTestEnable = vk::True,
+        .depthWriteEnable = vk::True,
+        .depthCompareOp = vk::CompareOp::eLess,
+        .depthBoundsTestEnable = vk::False,
+        .stencilTestEnable = vk::False
+    };
+
     vk::PipelineColorBlendAttachmentState colorBlendAttachment{
         .blendEnable = vk::False,
         .srcColorBlendFactor = vk::BlendFactor::eSrcAlpha,
@@ -512,7 +527,8 @@ void VulkanApp::createGraphicPipeline()
         .logicOpEnable = vk::False, 
         .logicOp = vk::LogicOp::eCopy, 
         .attachmentCount = 1, 
-        .pAttachments = &colorBlendAttachment };
+        .pAttachments = &colorBlendAttachment 
+    };
 
     /*
         Uniform values need to be specified during pipeline creation by creating a VkPipelineLayout object. 
@@ -525,18 +541,7 @@ void VulkanApp::createGraphicPipeline()
     };
     pipelineLayout = vk::raii::PipelineLayout(device, pipelineLayoutInfo);
 
-    vk::PipelineRenderingCreateInfo pipelineRenderingInfo{
-        .colorAttachmentCount = 1,
-        .pColorAttachmentFormats = &swapChainImageFormat
-    };
-
-    /*
-        Note that we're using dynamic rendering instead of a traditional render pass, 
-        so we set the renderPass parameter to nullptr and include a vk::PipelineRenderingCreateInfo structure in the pNext chain. 
-        This structure specifies the formats of the attachments that will be used during rendering.
-    */
     vk::GraphicsPipelineCreateInfo pipelineInfo{
-        .pNext = &pipelineRenderingInfo,
         .stageCount = 2,
         .pStages = shaderStages,
         .pVertexInputState = &vertexInputInfo,
@@ -544,13 +549,11 @@ void VulkanApp::createGraphicPipeline()
         .pViewportState = &viewportStateInfo,
         .pRasterizationState = &rasterizerInfo,
         .pMultisampleState = &multisamplingInfo,
+        .pDepthStencilState = &depthStencil,
         .pColorBlendState = &colorBlendingInfo,
         .pDynamicState = &dynamicStateInfo,
         .layout = *pipelineLayout,
-        /*
-            Set to nullptr because we're using dynamic rendering instead of a traditional render pass.
-        */
-        .renderPass = nullptr,
+        .renderPass = *renderPass,
         /*
              Vulkan allows you to create a new graphics pipeline by deriving from an existing pipeline. 
              The idea of pipeline derivatives is that it is less expensive to set up pipelines 
@@ -616,6 +619,7 @@ void VulkanApp::createCommandPool()
 
 void VulkanApp::createCommandBuffers()
 {
+    commandBuffers.clear();
     vk::CommandBufferAllocateInfo allocInfo{
         .commandPool = commandPool,
         .level = vk::CommandBufferLevel::ePrimary,
@@ -629,38 +633,24 @@ void VulkanApp::recordCommandBuffer(uint32_t imageIndex)
 {
     commandBuffers[currentFrame].begin({});
 
-    transition_image_layout(
-        imageIndex,
-        vk::ImageLayout::eUndefined,
-        vk::ImageLayout::eColorAttachmentOptimal,
-        {},  // srcAccessMask (no need to wait for previous operations)
-        vk::AccessFlagBits2::eColorAttachmentWrite,
-        vk::PipelineStageFlagBits2::eTopOfPipe,
-        vk::PipelineStageFlagBits2::eColorAttachmentOutput
-    );
-
-    vk::ClearValue clearColor = vk::ClearColorValue(0.0f, 0.0f, 0.0f, 1.0f);
-    vk::RenderingAttachmentInfo attachmentInfo = {
-        .imageView = swapChainImageViews[imageIndex],
-        .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
-        .loadOp = vk::AttachmentLoadOp::eClear,
-        .storeOp = vk::AttachmentStoreOp::eStore,
-        .clearValue = clearColor
+    std::array < vk::ClearValue, 2> clearValues{
+        vk::ClearColorValue(0.0f, 0.0f, 0.0f, 1.0f),
+        vk::ClearDepthStencilValue(1.0f, 0)
     };
-
-    vk::RenderingInfo renderingInfo = {
+    vk::RenderPassBeginInfo renderPassbeginInfo{
+        .renderPass = renderPass,
+        .framebuffer = swapChainFramebuffers[imageIndex],
         .renderArea = {.offset = { 0, 0 }, .extent = swapChainExtent },
-        .layerCount = 1,
-        .colorAttachmentCount = 1,
-        .pColorAttachments = &attachmentInfo
+        .clearValueCount = static_cast<uint32_t>(clearValues.size()),
+        .pClearValues = clearValues.data()
     };
 
-    commandBuffers[currentFrame].beginRendering(renderingInfo);
+    commandBuffers[currentFrame].beginRenderPass(renderPassbeginInfo, vk::SubpassContents::eInline);
     commandBuffers[currentFrame].bindPipeline(vk::PipelineBindPoint::eGraphics, *graphicsPipeline);
-    commandBuffers[currentFrame].bindVertexBuffers(0, *vertexBuffer, { 0 });
-    commandBuffers[currentFrame].bindIndexBuffer(*indexBuffer, 0, vk::IndexType::eUint16);
     commandBuffers[currentFrame].setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(swapChainExtent.width), static_cast<float>(swapChainExtent.height), 0.0f, 1.0f));
     commandBuffers[currentFrame].setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), swapChainExtent));
+    commandBuffers[currentFrame].bindVertexBuffers(0, *vertexBuffer, { 0 });
+    commandBuffers[currentFrame].bindIndexBuffer(*indexBuffer, 0, vk::IndexType::eUint32);
     commandBuffers[currentFrame].bindDescriptorSets(
         // Unlike vertex and index buffers, descriptor sets are not unique to graphics pipelines. Therefore, we need to specify if we want to bind descriptor sets to the graphics or compute pipeline. 
         vk::PipelineBindPoint::eGraphics, 
@@ -672,18 +662,7 @@ void VulkanApp::recordCommandBuffer(uint32_t imageIndex)
         nullptr);
     //commandBuffers[currentFrame].draw(3, 1, 0, 0);
     commandBuffers[currentFrame].drawIndexed(indices.size(), 1, 0, 0, 0);
-    commandBuffers[currentFrame].endRendering();
-    
-    transition_image_layout(
-        imageIndex,
-        vk::ImageLayout::eColorAttachmentOptimal,
-        vk::ImageLayout::ePresentSrcKHR,
-        vk::AccessFlagBits2::eColorAttachmentWrite,
-        {},
-        vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-        vk::PipelineStageFlagBits2::eBottomOfPipe
-    );
-
+    commandBuffers[currentFrame].endRenderPass();
     commandBuffers[currentFrame].end();
 }
 
@@ -821,7 +800,17 @@ void VulkanApp::drawFrame()
     };
 
     // The vkQueuePresentKHR function submits the request to present an image to the swap chain. 
-    result = queue.presentKHR(presentInfoKHR);
+    // The vkQueuePresentKHR function submits the request to present an image to the swap chain. 
+    try
+    {
+        // presentKHR will throw on eErrorOutOfDateKHR
+        queue.presentKHR(presentInfoKHR);
+    }
+    catch (vk::OutOfDateKHRError const&)
+    {
+        result = vk::Result::eErrorOutOfDateKHR;
+    }
+
     if (result == vk::Result::eErrorOutOfDateKHR || result == vk::Result::eSuboptimalKHR || framebufferResized) {
         framebufferResized = false;
         recreateSwapChain();
@@ -865,6 +854,8 @@ void VulkanApp::recreateSwapChain()
     cleanupSwapChain();
     createSwapChain();
     createImageViews();
+    createDepthResources();
+    createFramebuffers();
 }
 
 void VulkanApp::cleanupSwapChain()
@@ -994,9 +985,9 @@ void VulkanApp::createBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage, vk
 
 void VulkanApp::copyBuffer(vk::raii::Buffer& srcBuffer, vk::raii::Buffer& dstBuffer, vk::DeviceSize size)
 {
-    vk::raii::CommandBuffer commandCopyBuffer = beginSingleTimeCommands();
-    commandCopyBuffer.copyBuffer(srcBuffer, dstBuffer, vk::BufferCopy(0, 0, size));
-    endSingleTimeCommands(commandCopyBuffer);
+    auto commandCopyBuffer = beginSingleTimeCommands();
+    commandCopyBuffer->copyBuffer(srcBuffer, dstBuffer, vk::BufferCopy(0, 0, size));
+    endSingleTimeCommands(*commandCopyBuffer);
 }
 
 void VulkanApp::createIndexBuffer()
@@ -1066,7 +1057,7 @@ void VulkanApp::createDescriptorSetLayout()
         }
     };
     vk::DescriptorSetLayoutCreateInfo layoutInfo{
-        .bindingCount = bindings.size(),
+        .bindingCount = static_cast<uint32_t>(bindings.size()),
         .pBindings = bindings.data()
     };
     descriptorSetLayout = vk::raii::DescriptorSetLayout(device, layoutInfo);
@@ -1095,7 +1086,7 @@ void VulkanApp::updateUniformBuffer(uint32_t currentFrame)
     static auto startTime = std::chrono::high_resolution_clock::now();
 
     auto currentTime = std::chrono::high_resolution_clock::now();
-    float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
+    float time = std::chrono::duration<float>(currentTime - startTime).count();
 
     UniformBufferObject ubo{};
     // The glm::rotate function takes an existing transformation, rotation angle and rotation axis as parameters.
@@ -1199,7 +1190,8 @@ void VulkanApp::createDescriptorSets()
 void VulkanApp::createTextureImage()
 {
     int texWidth, texHeight, texChannels;
-    stbi_uc* pixels = stbi_load(ASSETS_SRC_DIR "/Texture/TextureMapping/texture.jpg", &texWidth, &texHeight, &texChannels, 
+    std::string texturePath = ASSETS_SRC_DIR "/Model/kris-light-world-form-deltarune/textures/krish_light_form_text.png";
+    stbi_uc* pixels = stbi_load(texturePath.c_str(), &texWidth, &texHeight, &texChannels,
         // The STBI_rgb_alpha value forces the image to be loaded with an alpha channel, even if it doesn’t have one
         STBI_rgb_alpha);
     vk::DeviceSize imageSize = texWidth * texHeight * 4;
@@ -1264,17 +1256,19 @@ void VulkanApp::createImage(uint32_t width, uint32_t height, vk::Format format, 
     image.bindMemory(imageMemory, 0);
 }
 
-vk::raii::CommandBuffer VulkanApp::beginSingleTimeCommands()
+std::unique_ptr<vk::raii::CommandBuffer> VulkanApp::beginSingleTimeCommands()
 {
     vk::CommandBufferAllocateInfo allocInfo{
-        .commandPool = commandPool,
-        .level = vk::CommandBufferLevel::ePrimary,
-        .commandBufferCount = 1
+            .commandPool = commandPool,
+            .level = vk::CommandBufferLevel::ePrimary,
+            .commandBufferCount = 1
     };
-    vk::raii::CommandBuffer commandBuffer = std::move(vk::raii::CommandBuffers(device, allocInfo).front());
-    commandBuffer.begin(vk::CommandBufferBeginInfo{
+    std::unique_ptr<vk::raii::CommandBuffer> commandBuffer = std::make_unique<vk::raii::CommandBuffer>(std::move(vk::raii::CommandBuffers(device, allocInfo).front()));
+
+    vk::CommandBufferBeginInfo beginInfo{
         .flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit
-    });
+    };
+    commandBuffer->begin(beginInfo);
 
     return commandBuffer;
 }
@@ -1332,7 +1326,7 @@ void VulkanApp::transitionImageLayout(const vk::raii::Image& image, vk::ImageLay
     {
         throw std::invalid_argument("unsupported layout transition!");
     }
-    commandBuffer.pipelineBarrier(
+    commandBuffer->pipelineBarrier(
         /*
             https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/chap7.html#synchronization-access-types-supported
         */
@@ -1340,7 +1334,7 @@ void VulkanApp::transitionImageLayout(const vk::raii::Image& image, vk::ImageLay
         sourceStage, 
         // The second parameter specifies the pipeline stage in which operations will wait on the barrier. 
         destinationStage, {}, {}, nullptr, barrier);
-    endSingleTimeCommands(commandBuffer);
+    endSingleTimeCommands(*commandBuffer);
 }
 
 void VulkanApp::copyBufferToImage(const vk::raii::Buffer& buffer, vk::raii::Image& image, uint32_t width, uint32_t height)
@@ -1373,16 +1367,16 @@ void VulkanApp::copyBufferToImage(const vk::raii::Buffer& buffer, vk::raii::Imag
             .depth = 1
         }
     };
-    commandBuffer.copyBufferToImage(buffer, image, vk::ImageLayout::eTransferDstOptimal, {region});
-    endSingleTimeCommands(commandBuffer);
+    commandBuffer->copyBufferToImage(buffer, image, vk::ImageLayout::eTransferDstOptimal, {region});
+    endSingleTimeCommands(*commandBuffer);
 }
 
 void VulkanApp::createTextureImageView()
 {
-    textureImageView = createImageView(textureImage, vk::Format::eR8G8B8A8Srgb);
+    textureImageView = createImageView(textureImage, vk::Format::eR8G8B8A8Srgb, vk::ImageAspectFlagBits::eColor);
 }
 
-vk::raii::ImageView VulkanApp::createImageView(vk::raii::Image& image, vk::Format format)
+vk::raii::ImageView VulkanApp::createImageView(vk::raii::Image& image, vk::Format format, vk::ImageAspectFlags aspectFlags)
 {
     /*
         createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
@@ -1403,7 +1397,7 @@ vk::raii::ImageView VulkanApp::createImageView(vk::raii::Image& image, vk::Forma
         .viewType = vk::ImageViewType::e2D,
         .format = format,
         .subresourceRange = {
-            .aspectMask = vk::ImageAspectFlagBits::eColor,
+            .aspectMask = aspectFlags,
             .baseMipLevel = 0,
             .levelCount = 1,
             .baseArrayLayer = 0,
@@ -1458,4 +1452,367 @@ void VulkanApp::createTextureSampler()
         .unnormalizedCoordinates = vk::False
     };
     textureSampler = vk::raii::Sampler(device, samplerInfo);
+}
+
+void VulkanApp::createDepthResources()
+{
+    vk::Format depthFormat = findDepthFormat();
+
+    createImage(swapChainExtent.width, swapChainExtent.height, depthFormat, vk::ImageTiling::eOptimal, vk::ImageUsageFlagBits::eDepthStencilAttachment, vk::MemoryPropertyFlagBits::eDeviceLocal, depthImage, depthImageMemory);
+    depthImageView = createImageView(depthImage, depthFormat, vk::ImageAspectFlagBits::eDepth);
+}
+
+vk::Format VulkanApp::findSupportedFormat(const std::vector<vk::Format>& candidates, vk::ImageTiling tiling, vk::FormatFeatureFlags features)
+{
+    for (const auto format : candidates) {
+        vk::FormatProperties props = physicalDevice.getFormatProperties(format);
+
+        if (tiling == vk::ImageTiling::eLinear && (props.linearTilingFeatures & features) == features) {
+            return format;
+        }
+        if (tiling == vk::ImageTiling::eOptimal && (props.optimalTilingFeatures & features) == features) {
+            return format;
+        }
+    }
+
+    throw std::runtime_error("failed to find supported format!");
+}
+
+vk::Format VulkanApp::findDepthFormat()
+{
+    return findSupportedFormat(
+        { vk::Format::eD32Sfloat, vk::Format::eD32SfloatS8Uint, vk::Format::eD24UnormS8Uint },
+        vk::ImageTiling::eOptimal,
+        vk::FormatFeatureFlagBits::eDepthStencilAttachment
+    );
+}
+
+bool VulkanApp::hasStencilComponent(vk::Format format)
+{
+    return format == vk::Format::eD32SfloatS8Uint || format == vk::Format::eD24UnormS8Uint;
+}
+
+bool VulkanApp::loadModel()
+{
+    bool flipV = true;
+
+    std::string modelPath = ASSETS_SRC_DIR "/Model/kris-light-world-form-deltarune/source/kris.fbx";
+
+    // Create manager & iosettings
+    FbxManager* manager = FbxManager::Create();
+    if (!manager) return false;
+    FbxIOSettings* ios = FbxIOSettings::Create(manager, IOSROOT);
+    manager->SetIOSettings(ios);
+
+    // Create an importer
+    FbxImporter* importer = FbxImporter::Create(manager, "");
+    bool importOK = importer->Initialize(modelPath.c_str(), -1, manager->GetIOSettings());
+    if (!importOK) {
+        std::cerr << "FBX Importer init failed: " << importer->GetStatus().GetErrorString() << "\n";
+        importer->Destroy();
+        manager->Destroy();
+        return false;
+    }
+
+    // Create a scene and import the file
+    FbxScene* scene = FbxScene::Create(manager, "scene");
+    if (!importer->Import(scene)) {
+        std::cerr << "FBX import failed: " << importer->GetStatus().GetErrorString() << "\n";
+        importer->Destroy();
+        manager->Destroy();
+        return false;
+    }
+    importer->Destroy();
+
+    // Triangulation Scenario
+    FbxGeometryConverter geoConverter(manager);
+    if (!geoConverter.Triangulate(scene, /*replace*/ true)) {
+        std::cerr << "Warning: Triangulate failed or returned false\n";
+    }
+
+    // Convert to the right-hand axis system
+    FbxAxisSystem desiredAxis = FbxAxisSystem::OpenGL;
+    FbxAxisSystem sceneAxis = scene->GetGlobalSettings().GetAxisSystem();
+    if (sceneAxis != desiredAxis) {
+        desiredAxis.ConvertScene(scene);
+    }
+
+    FbxNode* root = scene->GetRootNode();
+    if (!root) {
+        std::cerr << "Empty scene\n";
+        scene->Destroy();
+        manager->Destroy();
+        return false;
+    }
+
+    std::unordered_map<Vertex, uint32_t, VertexHash, VertexEqual> vtxToIndex;
+    vtxToIndex.reserve(4096);
+
+    const int nodeCount = root->GetChildCount();
+    std::vector<FbxNode*> nodes;
+    nodes.reserve(nodeCount);
+
+    std::function<void(FbxNode*)> collectNodes = [&](FbxNode* n) {
+        nodes.push_back(n);
+        for (int i = 0; i < n->GetChildCount(); ++i)
+            collectNodes(n->GetChild(i));
+    };
+    collectNodes(root);
+
+    for (FbxNode* node : nodes) 
+    {
+        FbxMesh* mesh = node->GetMesh();
+        if (!mesh) continue;
+
+        // Control points = positions
+        FbxVector4* controlPoints = mesh->GetControlPoints();
+        const int polygonCount = mesh->GetPolygonCount();
+
+        // UV layer (Only process Layer 0)
+        FbxGeometryElementUV* uvElement = nullptr;
+        if (mesh->GetElementUVCount() > 0) {
+            uvElement = mesh->GetElementUV(0);
+        }
+
+        // Vertex color layer (Layer 0)
+        FbxGeometryElementVertexColor* colorElement = nullptr;
+        if (mesh->GetElementVertexColorCount() > 0) {
+            colorElement = mesh->GetElementVertexColor(0);
+        }
+
+        FbxGeometryElementNormal* normalElement = nullptr;
+        if (mesh->GetElementNormalCount() > 0)
+        {
+            normalElement = mesh->GetElementNormal(0);
+        }
+
+        int polygonVertexIndex = 0;
+        for (int p = 0; p < polygonCount; ++p)
+        {
+            // Expect polySize = 3
+            const int polySize = mesh->GetPolygonSize(p);
+            for (int v = 0; v < polySize; ++v)
+            {
+                const int controlPointIndex = mesh->GetPolygonVertex(p, v);
+                Vertex vert{};
+                FbxVector4 cp = controlPoints[controlPointIndex];
+                vert.pos = glm::vec3(static_cast<float>(cp[0]), static_cast<float>(cp[1]), static_cast<float>(cp[2]));
+
+                if (uvElement)
+                {
+                    FbxVector2 uv;
+                    if (uvElement->GetMappingMode() == FbxGeometryElement::eByControlPoint)  // Access via control point
+                    {
+                        int index = (uvElement->GetReferenceMode() == FbxGeometryElement::eDirect)
+                            ? controlPointIndex
+                            : uvElement->GetIndexArray().GetAt(controlPointIndex);
+                        uv = uvElement->GetDirectArray().GetAt(index);
+                    }
+                    else if (uvElement->GetMappingMode() == FbxGeometryElement::eByPolygonVertex)  // Use the polygon-vertex global index
+                    {
+                        int index = (uvElement->GetReferenceMode() == FbxGeometryElement::eDirect)
+                            ? polygonVertexIndex
+                            : uvElement->GetIndexArray().GetAt(polygonVertexIndex);
+                        uv = uvElement->GetDirectArray().GetAt(index);
+                    }
+                    else  // Other mapping modes (such as eByPolygon) are not common and are handled by default
+                    {
+                        uv = FbxVector2(0.0, 0.0);
+                    }
+
+                    vert.texCoord = glm::vec2(static_cast<float>(uv[0]), static_cast<float>(uv[1]));
+                    if (flipV) vert.texCoord.y = 1.0f - vert.texCoord.y;
+                }
+                else
+                {
+                    vert.texCoord = glm::vec2(0.0f);
+                }
+
+                if (colorElement) {
+                    FbxColor c;
+                    if (colorElement->GetMappingMode() == FbxGeometryElement::eByControlPoint) 
+                    {
+                        int index = (colorElement->GetReferenceMode() == FbxGeometryElement::eDirect)
+                            ? controlPointIndex
+                            : colorElement->GetIndexArray().GetAt(controlPointIndex);
+                        c = colorElement->GetDirectArray().GetAt(index);
+                    }
+                    else if (colorElement->GetMappingMode() == FbxGeometryElement::eByPolygonVertex) 
+                    {
+                        int index = (colorElement->GetReferenceMode() == FbxGeometryElement::eDirect)
+                            ? polygonVertexIndex
+                            : colorElement->GetIndexArray().GetAt(polygonVertexIndex);
+                        c = colorElement->GetDirectArray().GetAt(index);
+                    }
+                    else {
+                        c = FbxColor(1.0, 1.0, 1.0, 1.0);
+                    }
+                    vert.color = glm::vec3(static_cast<float>(c.mRed), static_cast<float>(c.mGreen), static_cast<float>(c.mBlue));
+                }
+                else 
+                {
+                    vert.color = glm::vec3(1.0f, 1.0f, 1.0f);
+                }
+
+                if (normalElement)
+                {
+                    FbxVector4 n;
+                    if (normalElement->GetMappingMode() == FbxGeometryElement::eByControlPoint)
+                    {
+                        int index = (normalElement->GetReferenceMode() == FbxGeometryElement::eDirect)
+                            ? controlPointIndex
+                            : normalElement->GetIndexArray().GetAt(controlPointIndex);
+                        n = normalElement->GetDirectArray().GetAt(index);
+                    }
+                    else if (normalElement->GetMappingMode() == FbxGeometryElement::eByPolygonVertex) 
+                    {
+                        int index = (normalElement->GetReferenceMode() == FbxGeometryElement::eDirect)
+                            ? polygonVertexIndex
+                            : normalElement->GetIndexArray().GetAt(polygonVertexIndex);
+                        n = normalElement->GetDirectArray().GetAt(index);
+                    }
+                    else
+                    {
+                        n = FbxVector4(0.0f, 1.0f, 0.0f, 1.0f);
+                    }
+                    vert.norm = glm::vec3(static_cast<float>(n[0]), static_cast<float>(n[1]), static_cast<float>(n[2]));
+                }
+
+                // Remove duplicates or create new vertices
+                auto it = vtxToIndex.find(vert);
+                if (it != vtxToIndex.end()) {
+                    indices.push_back(it->second);
+                }
+                else {
+                    uint32_t newIndex = static_cast<uint32_t>(vertices.size());
+                    vertices.push_back(vert);
+                    indices.push_back(newIndex);
+                    vtxToIndex.emplace(vert, newIndex);
+                }
+
+                polygonVertexIndex++;
+            }
+        }
+    }
+
+    scene->Destroy();
+    manager->Destroy();
+
+    return true;
+}
+
+void VulkanApp::createRenderPass()
+{
+    vk::AttachmentDescription colorAttachment{
+        .format = swapChainImageFormat,
+        .samples = vk::SampleCountFlagBits::e1,
+        /*
+            The loadOp and storeOp determine what to do with the data in the attachment before rendering and after rendering. 
+        */
+        /*
+            VK_ATTACHMENT_LOAD_OP_LOAD: Preserve the existing contents of the attachment
+            VK_ATTACHMENT_LOAD_OP_CLEAR: Clear the values to a constant at the start
+            VK_ATTACHMENT_LOAD_OP_DONT_CARE: Existing contents are undefined; we don't care about them
+        */
+        .loadOp = vk::AttachmentLoadOp::eClear,
+        /*
+            VK_ATTACHMENT_STORE_OP_STORE: Rendered contents will be stored in memory and can be read later
+            VK_ATTACHMENT_STORE_OP_DONT_CARE: Contents of the framebuffer will be undefined after the rendering operation
+        */
+        .storeOp = vk::AttachmentStoreOp::eStore,
+
+        .stencilLoadOp = vk::AttachmentLoadOp::eDontCare,
+        .stencilStoreOp = vk::AttachmentStoreOp::eDontCare,
+
+        /*
+            The initialLayout specifies which layout the image will have before the render pass begins. The finalLayout specifies the layout to automatically transition to when the render pass finishes.
+        */
+        /*
+            VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL: Images used as color attachment
+            VK_IMAGE_LAYOUT_PRESENT_SRC_KHR: Images to be presented in the swap chain
+            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL: Images to be used as destination for a memory copy operation
+        */
+        .initialLayout = vk::ImageLayout::eUndefined,
+        .finalLayout = vk::ImageLayout::ePresentSrcKHR
+    };
+
+    vk::AttachmentDescription depthAttachment{
+        .format = findDepthFormat(),
+        .samples = vk::SampleCountFlagBits::e1,
+        .loadOp = vk::AttachmentLoadOp::eClear,
+        .storeOp = vk::AttachmentStoreOp::eStore,
+        .stencilLoadOp = vk::AttachmentLoadOp::eDontCare,
+        .stencilStoreOp = vk::AttachmentStoreOp::eDontCare,
+        .initialLayout = vk::ImageLayout::eUndefined,
+        .finalLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal
+    };
+
+    /*
+        Every subpass **references** one or more of the attachments that we've described using the structure in the previous sections.
+    */
+
+    vk::AttachmentReference colorAttachmentRef{
+        .attachment = 0,
+        .layout = vk::ImageLayout::eColorAttachmentOptimal
+    };
+
+    vk::AttachmentReference depthAttachmentRef{
+        .attachment = 1,
+        .layout = vk::ImageLayout::eDepthStencilAttachmentOptimal
+    };
+
+    vk::SubpassDependency dependency{
+        .srcSubpass = vk::SubpassExternal,
+        .dstSubpass = 0,
+        .srcStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput | vk::PipelineStageFlagBits::eLateFragmentTests,
+        .dstStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput | vk::PipelineStageFlagBits::eEarlyFragmentTests,
+        .srcAccessMask = vk::AccessFlagBits::eDepthStencilAttachmentWrite,
+        .dstAccessMask = vk::AccessFlagBits::eColorAttachmentWrite | vk::AccessFlagBits::eDepthStencilAttachmentWrite
+    };
+
+    vk::SubpassDescription subpass{
+        .pipelineBindPoint = vk::PipelineBindPoint::eGraphics,
+        .colorAttachmentCount = 1,
+        /*
+            pInputAttachments: Attachments that are read from a shader
+            pResolveAttachments: Attachments used for multisampling color attachments
+            pDepthStencilAttachment: Attachment for depth and stencil data
+            pPreserveAttachments: Attachments that are not used by this subpass, but for which the data must be preserved
+        */
+        .pColorAttachments = &colorAttachmentRef,
+        .pDepthStencilAttachment = &depthAttachmentRef
+    };
+
+    std::array<vk::AttachmentDescription, 2> attachments = { colorAttachment, depthAttachment };
+    vk::RenderPassCreateInfo renderPassInfo{
+        .attachmentCount = static_cast<uint32_t>(attachments.size()),
+        .pAttachments = attachments.data(),
+        .subpassCount = 1,
+        .pSubpasses = &subpass,
+        .dependencyCount = 1,
+        .pDependencies = &dependency
+    };
+
+    renderPass = device.createRenderPass(renderPassInfo);
+}
+
+void VulkanApp::createFramebuffers()
+{
+    swapChainFramebuffers.clear();
+    for (size_t i = 0; i < swapChainImageViews.size(); ++i)
+    {
+        std::array<vk::ImageView, 2> attachments = {
+            *swapChainImageViews[i],
+            *depthImageView
+        };
+        vk::FramebufferCreateInfo framebufferInfo{
+            .renderPass = renderPass,
+            .attachmentCount = static_cast<uint32_t>(attachments.size()),
+            .pAttachments = attachments.data(),
+            .width = swapChainExtent.width,
+            .height = swapChainExtent.height,
+            .layers = 1
+        };
+        swapChainFramebuffers.push_back(std::move(device.createFramebuffer(framebufferInfo)));
+    }
 }

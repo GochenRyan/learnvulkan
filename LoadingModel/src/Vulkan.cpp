@@ -530,7 +530,7 @@ void VulkanApp::createGraphicPipeline()
 
     /*
         Uniform values need to be specified during pipeline creation by creating a VkPipelineLayout object. 
-        Even though we won�t be using them now, we are still required to create an empty pipeline layout.
+        Even though we won't be using them now, we are still required to create an empty pipeline layout.
     */
     vk::PipelineLayoutCreateInfo pipelineLayoutInfo{ 
         .setLayoutCount = 1, 
@@ -547,7 +547,7 @@ void VulkanApp::createGraphicPipeline()
     };
 
     /*
-        Note that we�re using dynamic rendering instead of a traditional render pass, 
+        Note that we're using dynamic rendering instead of a traditional render pass, 
         so we set the renderPass parameter to nullptr and include a vk::PipelineRenderingCreateInfo structure in the pNext chain. 
         This structure specifies the formats of the attachments that will be used during rendering.
     */
@@ -565,7 +565,7 @@ void VulkanApp::createGraphicPipeline()
         .pDynamicState = &dynamicStateInfo,
         .layout = *pipelineLayout,
         /*
-            Set to nullptr because we�re using dynamic rendering instead of a traditional render pass.
+            Set to nullptr because we're using dynamic rendering instead of a traditional render pass.
         */
         .renderPass = nullptr,
         /*
@@ -927,7 +927,7 @@ void VulkanApp::cleanupSwapChain()
     /*
         The disadvantage of this approach is that we need to stop all renderings before creating the new swap chain. 
         It is possible to create a new swap chain while drawing commands on an image from the old swap chain are still in-flight. 
-        You need to pass the previous swap chain to the oldSwapchain field in the VkSwapchainCreateInfoKHR struct and destroy the old swap chain as soon as you�ve finished using it.
+        You need to pass the previous swap chain to the oldSwapchain field in the VkSwapchainCreateInfoKHR struct and destroy the old swap chain as soon as you've finished using it.
     */
     swapChainImageViews.clear();
     swapChain = nullptr;
@@ -948,7 +948,7 @@ void VulkanApp::createVertexBuffer()
     //        Use a memory heap that is host coherent, indicated with VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
     //        Call vkFlushMappedMemoryRanges after writing to the mapped memory, and call vkInvalidateMappedMemoryRanges before reading from the mapped memory
 
-    //    Flushing memory ranges or using a coherent memory heap means that the driver will be aware of our writings to the buffer, but it doesn�t mean that they are actually visible on the GPU yet. 
+    //    Flushing memory ranges or using a coherent memory heap means that the driver will be aware of our writings to the buffer, but it doesn't mean that they are actually visible on the GPU yet. 
     //    The transfer of data to the GPU is an operation that happens in the background, and the specification simply tells us that it is guaranteed to be complete as of the next call to vkQueueSubmit.
     //*/
     //memcpy(data, vertices.data(), static_cast<size_t>(bufferSize));
@@ -958,7 +958,7 @@ void VulkanApp::createVertexBuffer()
         The memory type that allows us to access it from the CPU may not be the most optimal memory type for the graphics card itself to read from. 
         The most optimal memory has the VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT flag and is usually not accessible by the CPU on dedicated graphics cards.
         =>  One staging buffer in CPU accessible memory to upload the data from the vertex array to, and the final vertex buffer in device local memory. 
-            We�ll then use a buffer copy command to move the data from the staging buffer to the actual vertex buffer.
+            We'll then use a buffer copy command to move the data from the staging buffer to the actual vertex buffer.
     */
 
     /*
@@ -1035,13 +1035,13 @@ void VulkanApp::createBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage, vk
     };
 
     /*
-        It should be noted that in a real world application, you�re not supposed to actually call vkAllocateMemory for every individual buffer. 
+        It should be noted that in a real world application, you're not supposed to actually call vkAllocateMemory for every individual buffer. 
         The maximum number of simultaneous memory allocations is limited by the maxMemoryAllocationCount physical device limit, which may be as low as 4096 even on high end hardware like an NVIDIA GTX 1080. 
         The right way to allocate memory for a large number of objects at the same time is to create a custom allocator that splits up a single allocation among many different objects 
-        by using the offset parameters that we�ve seen in many functions.
+        by using the offset parameters that we've seen in many functions.
 
         You can either implement such an allocator yourself, or use the VulkanMemoryAllocator library provided by the GPUOpen initiative. 
-        However, for this tutorial, it�s okay to use a separate allocation for every resource, because we won�t come close to hitting any of these limits for now.
+        However, for this tutorial, it's okay to use a separate allocation for every resource, because we won't come close to hitting any of these limits for now.
     */
     bufferMemory = vk::raii::DeviceMemory(device, memoryAllocateInfo);
     buffer.bindMemory(*bufferMemory, /* the offset within the region of memory. If the offset is non-zero, then it is required to be divisible by memRequirements.alignment. */0);
@@ -1071,7 +1071,7 @@ void VulkanApp::createIndexBuffer()
 
 /*
     A descriptor is a way for shaders to freely access resources like buffers and images. 
-    We�re going to set up a buffer that contains the transformation matrices and have the vertex shader access them through a descriptor. Usage of descriptors consists of three parts:
+    We're going to set up a buffer that contains the transformation matrices and have the vertex shader access them through a descriptor. Usage of descriptors consists of three parts:
         Specify a descriptor set layout during pipeline creation
         Allocate a descriptor set from a descriptor pool
         Bind the descriptor set during rendering
@@ -1231,7 +1231,7 @@ void VulkanApp::createDescriptorSets()
                      The pBufferInfo field is used for descriptors that refer to buffer data,
                      pImageInfo is used for descriptors that refer to image data,
                      and pTexelBufferView is used for descriptors that refer to buffer views.
-                     Our descriptor is based on buffers, so we�re using pBufferInfo.
+                     Our descriptor is based on buffers, so we're using pBufferInfo.
                 */
                 .pBufferInfo = &bufferInfo
             },

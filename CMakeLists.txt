@@ -89,5 +89,7 @@ add_subdirectory(HelloTriangle)
 add_subdirectory(TextureMapping)
 add_subdirectory(DepthBuffering)
 add_subdirectory(LoadingModel)
+add_subdirectory(RSubpass)
+add_subdirectory(DeferredRendering)
 
 # add_subdirectory(Common)

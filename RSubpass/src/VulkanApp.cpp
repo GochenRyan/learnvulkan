@@ -1,13 +1,10 @@
-#include <TextureMapping/VulkanApp.h>
+#include <RSubpass/VulkanApp.h>
 #include <chrono>
 #include <format>
 #include <fstream>
 #include <glm/gtc/matrix_transform.hpp>
 #include <iostream>
 #include <stdexcept>
-
-#define STB_IMAGE_IMPLEMENTATION
-#include <stb_image.h>
 
 static VKAPI_ATTR vk::Bool32 VKAPI_CALL debugCallback(vk::DebugUtilsMessageSeverityFlagBitsEXT severity, vk::DebugUtilsMessageTypeFlagsEXT type, const vk::DebugUtilsMessengerCallbackDataEXT* pCallbackData, void*) {
     if (severity == vk::DebugUtilsMessageSeverityFlagBitsEXT::eError || severity == vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning) {
@@ -114,8 +111,28 @@ void VulkanApp::createSwapChain()
 
 void VulkanApp::createImageViews()
 {
-    vk::ImageViewCreateInfo imageViewCreateInfo{ .viewType = vk::ImageViewType::e2D, .format = swapChainImageFormat,
-          .subresourceRange = { vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1 } };
+    swapChainImageViews.clear();
+
+    /*
+        createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+        createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+        createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+        createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+
+        Each component (r, g, b, a) in the components field specifies the mapping method of the image color channel.
+        VK_COMPONENT_SWIZZLE_IDENTITY indicates no swapping, that is, the red channel remains red, the green channel remains green, and so on.
+        Vulkan allows the order of image channels to be adjusted through component swapping (Swizzle) without modifying the image data itself. This is very useful in the following scenarios:
+            Format mismatch: When the image format does not match the channel order expected by the shader (for example, the image is stored as BGR, but the shader expects RGB).
+            Monochrome channel: Map multiple channels to the same value (for example, set the Alpha channel as the red channel).
+            Simplify data processing: Avoid preprocessing image data on the CPU side.
+    */
+
+    vk::ImageViewCreateInfo imageViewCreateInfo{
+        .viewType = vk::ImageViewType::e2D,
+        .format = swapChainImageFormat,
+        .subresourceRange = { vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1 }
+    };
+
     for (auto image : swapChainImages)
     {
         imageViewCreateInfo.image = image;
@@ -149,12 +166,11 @@ void VulkanApp::initVulkan()
     createLogicalDevice();
     createSwapChain();
     createImageViews();
+    createRenderPass();
     createDescriptorSetLayout();
     createGraphicPipeline();
+    createFramebuffers();
     createCommandPool();
-    createTextureImage();
-    createTextureImageView();
-    createTextureSampler();
     createVertexBuffer();
     createIndexBuffer();
     createUniformBuffers();
@@ -323,9 +339,7 @@ void VulkanApp::pickPhysicalDevice()
                     });
 
             auto features = device.template getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan13Features, vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>();
-            bool supportsRequiredFeatures = features.template get<vk::PhysicalDeviceFeatures2>().features.samplerAnisotropy && 
-                                            features.template get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering &&
-                                            features.template get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>().extendedDynamicState;
+            bool supportsRequiredFeatures = features.template get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>().extendedDynamicState;
 
             return supportsVulkan1_3 && supportsGraphics && supportsAllRequiredExtensions && supportsRequiredFeatures;
         });
@@ -364,8 +378,8 @@ void VulkanApp::createLogicalDevice()
 
     // query for Vulkan 1.3 features
     vk::StructureChain<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan13Features, vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT> featureChain = {
-        {.features = { .samplerAnisotropy = true } },                                                     // vk::PhysicalDeviceFeatures2
-        {.synchronization2 = true, .dynamicRendering = true },  // vk::PhysicalDeviceVulkan13Features
+        {},                                                     // vk::PhysicalDeviceFeatures2
+        {.synchronization2 = true, .dynamicRendering = false },  // vk::PhysicalDeviceVulkan13Features
         {.extendedDynamicState = true }                         // vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT
     };
 
@@ -412,7 +426,7 @@ void VulkanApp::createSurface()
 void VulkanApp::createGraphicPipeline()
 {
     //auto shaderCode = readFile("Assets/Shader/HelloTriangle/slang.spv");
-    auto shaderCode = readFile(ASSETS_SRC_DIR "/Shader/TextureMapping/slang.spv");
+    auto shaderCode = readFile(ASSETS_SRC_DIR "/Shader/HelloTriangle/slang.spv");
     vk::raii::ShaderModule shaderModule = createShaderModule(shaderCode);
 
     /*
@@ -550,7 +564,7 @@ void VulkanApp::createGraphicPipeline()
         /*
             Set to nullptr because we're using dynamic rendering instead of a traditional render pass.
         */
-        .renderPass = nullptr,
+        .renderPass = *renderPass,
         /*
              Vulkan allows you to create a new graphics pipeline by deriving from an existing pipeline. 
              The idea of pipeline derivatives is that it is less expensive to set up pipelines 
@@ -629,33 +643,26 @@ void VulkanApp::recordCommandBuffer(uint32_t imageIndex)
 {
     commandBuffers[currentFrame].begin({});
 
-    transition_image_layout(
-        imageIndex,
-        vk::ImageLayout::eUndefined,
-        vk::ImageLayout::eColorAttachmentOptimal,
-        {},  // srcAccessMask (no need to wait for previous operations)
-        vk::AccessFlagBits2::eColorAttachmentWrite,
-        vk::PipelineStageFlagBits2::eTopOfPipe,
-        vk::PipelineStageFlagBits2::eColorAttachmentOutput
-    );
+    //transition_image_layout(
+    //    imageIndex,
+    //    vk::ImageLayout::eUndefined,
+    //    vk::ImageLayout::eColorAttachmentOptimal,
+    //    {},  // srcAccessMask (no need to wait for previous operations)
+    //    vk::AccessFlagBits2::eColorAttachmentWrite,
+    //    vk::PipelineStageFlagBits2::eTopOfPipe,
+    //    vk::PipelineStageFlagBits2::eColorAttachmentOutput
+    //);
 
     vk::ClearValue clearColor = vk::ClearColorValue(0.0f, 0.0f, 0.0f, 1.0f);
-    vk::RenderingAttachmentInfo attachmentInfo = {
-        .imageView = swapChainImageViews[imageIndex],
-        .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
-        .loadOp = vk::AttachmentLoadOp::eClear,
-        .storeOp = vk::AttachmentStoreOp::eStore,
-        .clearValue = clearColor
-    };
-
-    vk::RenderingInfo renderingInfo = {
+    vk::RenderPassBeginInfo renderPassbeginInfo{
+        .renderPass = renderPass,
+        .framebuffer = swapChainFramebuffers[imageIndex],
         .renderArea = {.offset = { 0, 0 }, .extent = swapChainExtent },
-        .layerCount = 1,
-        .colorAttachmentCount = 1,
-        .pColorAttachments = &attachmentInfo
+        .clearValueCount = 1,
+        .pClearValues = &clearColor
     };
 
-    commandBuffers[currentFrame].beginRendering(renderingInfo);
+    commandBuffers[currentFrame].beginRenderPass(renderPassbeginInfo, vk::SubpassContents::eInline);
     commandBuffers[currentFrame].bindPipeline(vk::PipelineBindPoint::eGraphics, *graphicsPipeline);
     commandBuffers[currentFrame].bindVertexBuffers(0, *vertexBuffer, { 0 });
     commandBuffers[currentFrame].bindIndexBuffer(*indexBuffer, 0, vk::IndexType::eUint16);
@@ -672,17 +679,17 @@ void VulkanApp::recordCommandBuffer(uint32_t imageIndex)
         nullptr);
     //commandBuffers[currentFrame].draw(3, 1, 0, 0);
     commandBuffers[currentFrame].drawIndexed(indices.size(), 1, 0, 0, 0);
-    commandBuffers[currentFrame].endRendering();
+    commandBuffers[currentFrame].endRenderPass();
     
-    transition_image_layout(
-        imageIndex,
-        vk::ImageLayout::eColorAttachmentOptimal,
-        vk::ImageLayout::ePresentSrcKHR,
-        vk::AccessFlagBits2::eColorAttachmentWrite,
-        {},
-        vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-        vk::PipelineStageFlagBits2::eBottomOfPipe
-    );
+    //transition_image_layout(
+    //    imageIndex,
+    //    vk::ImageLayout::eColorAttachmentOptimal,
+    //    vk::ImageLayout::ePresentSrcKHR,
+    //    vk::AccessFlagBits2::eColorAttachmentWrite,
+    //    {},
+    //    vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+    //    vk::PipelineStageFlagBits2::eBottomOfPipe
+    //);
 
     commandBuffers[currentFrame].end();
 }
@@ -821,7 +828,16 @@ void VulkanApp::drawFrame()
     };
 
     // The vkQueuePresentKHR function submits the request to present an image to the swap chain. 
-    result = queue.presentKHR(presentInfoKHR);
+    try 
+    {
+        // presentKHR will throw on eErrorOutOfDateKHR
+        queue.presentKHR(presentInfoKHR);
+    }
+    catch (vk::OutOfDateKHRError const&)
+    {
+        result = vk::Result::eErrorOutOfDateKHR;
+    }
+
     if (result == vk::Result::eErrorOutOfDateKHR || result == vk::Result::eSuboptimalKHR || framebufferResized) {
         framebufferResized = false;
         recreateSwapChain();
@@ -865,6 +881,7 @@ void VulkanApp::recreateSwapChain()
     cleanupSwapChain();
     createSwapChain();
     createImageViews();
+    createFramebuffers();
 }
 
 void VulkanApp::cleanupSwapChain()
@@ -994,9 +1011,22 @@ void VulkanApp::createBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage, vk
 
 void VulkanApp::copyBuffer(vk::raii::Buffer& srcBuffer, vk::raii::Buffer& dstBuffer, vk::DeviceSize size)
 {
-    vk::raii::CommandBuffer commandCopyBuffer = beginSingleTimeCommands();
+    vk::CommandBufferAllocateInfo allocInfo{
+        .commandPool = commandPool,
+        .level = vk::CommandBufferLevel::ePrimary,
+        .commandBufferCount = MAX_FRAMES_IN_FLIGHT
+    };
+    vk::raii::CommandBuffer commandCopyBuffer = std::move(vk::raii::CommandBuffers(device, allocInfo).front());
+    commandCopyBuffer.begin(vk::CommandBufferBeginInfo{
+        .flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit
+    });
     commandCopyBuffer.copyBuffer(srcBuffer, dstBuffer, vk::BufferCopy(0, 0, size));
-    endSingleTimeCommands(commandCopyBuffer);
+    commandCopyBuffer.end();
+    queue.submit(vk::SubmitInfo{
+        .commandBufferCount = 1,
+        .pCommandBuffers = &*commandCopyBuffer
+    }, nullptr);
+    queue.waitIdle();
 }
 
 void VulkanApp::createIndexBuffer()
@@ -1049,25 +1079,16 @@ void VulkanApp::createIndexBuffer()
 */
 void VulkanApp::createDescriptorSetLayout()
 {
-    std::array bindings = {
-        vk::DescriptorSetLayoutBinding {
-            .binding = 0,
-            .descriptorType = vk::DescriptorType::eUniformBuffer,
-            .descriptorCount = 1,
-            .stageFlags = vk::ShaderStageFlagBits::eVertex,
-            .pImmutableSamplers = nullptr
-        },
-        vk::DescriptorSetLayoutBinding {
-            .binding = 1,
-            .descriptorType = vk::DescriptorType::eCombinedImageSampler,
-            .descriptorCount = 1,
-            .stageFlags = vk::ShaderStageFlagBits::eFragment,
-            .pImmutableSamplers = nullptr
-        }
+    vk::DescriptorSetLayoutBinding uboLayoutBinding{
+        .binding = 0,
+        .descriptorType = vk::DescriptorType::eUniformBuffer,
+        .descriptorCount = 1,
+        .stageFlags = vk::ShaderStageFlagBits::eVertex,
+        .pImmutableSamplers = nullptr
     };
     vk::DescriptorSetLayoutCreateInfo layoutInfo{
-        .bindingCount = bindings.size(),
-        .pBindings = bindings.data()
+        .bindingCount = 1,
+        .pBindings = &uboLayoutBinding
     };
     descriptorSetLayout = vk::raii::DescriptorSetLayout(device, layoutInfo);
 }
@@ -1103,7 +1124,7 @@ void VulkanApp::updateUniformBuffer(uint32_t currentFrame)
     // For the view transformation I've decided to look at the geometry from above at a 45 degree angle. The glm::lookAt function takes the eye position, center position and up axis as parameters.
     ubo.view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
     // I've chosen to use a perspective projection with a 45 degree vertical field-of-view. The other parameters are the aspect ratio, near and far view planes. 
-    ubo.proj = glm::perspective(glm::radians(45.0f), static_cast<float>(swapChainExtent.width) / static_cast<float>(swapChainExtent.height), 0.1f, 10.0f);
+    ubo.proj = glm::perspective(glm::radians(45.0f), static_cast<float>(swapChainExtent.width) / static_cast<float>(swapChainExtent.height), 0.0f, 10.0f);
     // GLM was originally designed for OpenGL, where the Y coordinate of the clip coordinates is inverted. The easiest way to compensate for that is to flip the sign on the scaling factor of the Y axis in the projection matrix. 
     // If you don't do this, then the image will be rendered upside down.
     ubo.proj[1][1] *= -1;
@@ -1112,21 +1133,12 @@ void VulkanApp::updateUniformBuffer(uint32_t currentFrame)
 
 void VulkanApp::createDescriptorPool()
 {
-    std::array poolSize{
-        vk::DescriptorPoolSize{
-            .type = vk::DescriptorType::eUniformBuffer,
-            .descriptorCount = MAX_FRAMES_IN_FLIGHT
-        },
-        vk::DescriptorPoolSize{
-            .type = vk::DescriptorType::eCombinedImageSampler,
-            .descriptorCount = MAX_FRAMES_IN_FLIGHT
-        }
-    };
+    vk::DescriptorPoolSize poolSize(vk::DescriptorType::eUniformBuffer, MAX_FRAMES_IN_FLIGHT);
     vk::DescriptorPoolCreateInfo poolInfo{
         .flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
         .maxSets = MAX_FRAMES_IN_FLIGHT,
-        .poolSizeCount = 2,
-        .pPoolSizes = poolSize.data()
+        .poolSizeCount = 1,
+        .pPoolSizes = &poolSize
     };
     descriptorPool = vk::raii::DescriptorPool(device, poolInfo);
 }
@@ -1150,312 +1162,114 @@ void VulkanApp::createDescriptorSets()
             .offset = 0,
             .range = sizeof(UniformBufferObject)
         };
+        vk::WriteDescriptorSet descriptorWrite{
+            /*
+*             The first two fields specify the descriptor set to update and the binding. 
+            */
+            .dstSet = descriptorSets[i],
+            // Remember that descriptors can be arrays, so we also need to specify the first index in the array that we want to update. 
+            // We're not using an array, so the index is simply 0.
+            .dstBinding = 0,
 
-        vk::DescriptorImageInfo imageInfo{
-            .sampler = textureSampler,
-            .imageView = textureImageView,
-            .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal
+            // It's possible to update multiple descriptors at once in an array, starting at index dstArrayElement.
+            .dstArrayElement = 0,
+            // The descriptorCount field specifies how many array elements you want to update.
+            .descriptorCount = 1,
+            .descriptorType = vk::DescriptorType::eUniformBuffer,
+            /*
+                 The pBufferInfo field is used for descriptors that refer to buffer data, 
+                 pImageInfo is used for descriptors that refer to image data, 
+                 and pTexelBufferView is used for descriptors that refer to buffer views. 
+                 Our descriptor is based on buffers, so we're using pBufferInfo.
+            */
+            .pBufferInfo = &bufferInfo
         };
 
-        std::array descriptorWrites{
-            vk::WriteDescriptorSet{
-                /*
-    *             The first two fields specify the descriptor set to update and the binding.
-                */
-                .dstSet = descriptorSets[i],
-                // Remember that descriptors can be arrays, so we also need to specify the first index in the array that we want to update. 
-                // We're not using an array, so the index is simply 0.
-                .dstBinding = 0,
-
-                // It's possible to update multiple descriptors at once in an array, starting at index dstArrayElement.
-                .dstArrayElement = 0,
-                // The descriptorCount field specifies how many array elements you want to update.
-                .descriptorCount = 1,
-                .descriptorType = vk::DescriptorType::eUniformBuffer,
-                /*
-                     The pBufferInfo field is used for descriptors that refer to buffer data,
-                     pImageInfo is used for descriptors that refer to image data,
-                     and pTexelBufferView is used for descriptors that refer to buffer views.
-                     Our descriptor is based on buffers, so we're using pBufferInfo.
-                */
-                .pBufferInfo = &bufferInfo
-            },
-            vk::WriteDescriptorSet{
-                .dstSet = descriptorSets[i],
-                .dstBinding = 1,
-                .dstArrayElement = 0,
-                .descriptorCount = 1,
-                .descriptorType = vk::DescriptorType::eCombinedImageSampler,
-                .pImageInfo = &imageInfo
-            }
-        };
-
-        device.updateDescriptorSets(descriptorWrites, {});
+        device.updateDescriptorSets(descriptorWrite, {});
     }
 }
 
-// todo: Try to experiment with this by creating a setupCommandBuffer that the helper functions record commands into, and add a flushSetupCommands to execute the commands that have been recorded so far. 
-// It’s best to do this after the texture mapping works to check if the texture resources are still set up correctly.
-void VulkanApp::createTextureImage()
+void VulkanApp::createRenderPass()
 {
-    int texWidth, texHeight, texChannels;
-    stbi_uc* pixels = stbi_load(ASSETS_SRC_DIR "/Texture/TextureMapping/texture.jpg", &texWidth, &texHeight, &texChannels, 
-        // The STBI_rgb_alpha value forces the image to be loaded with an alpha channel, even if it doesn’t have one
-        STBI_rgb_alpha);
-    vk::DeviceSize imageSize = texWidth * texHeight * 4;
-
-    if (!pixels)
-        throw std::runtime_error("failed to load texture image!");
-    
-    vk::raii::Buffer stagingBuffer = nullptr;
-    vk::raii::DeviceMemory stagingBufferMemory = nullptr;
-    createBuffer(imageSize, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, stagingBuffer, stagingBufferMemory);
-    void* dataStaging = stagingBufferMemory.mapMemory(0, imageSize);
-    memcpy(dataStaging, pixels, imageSize);
-    stagingBufferMemory.unmapMemory();
-
-    stbi_image_free(pixels);
-
-    createImage(texWidth, texHeight, vk::Format::eR8G8B8A8Srgb, vk::ImageTiling::eOptimal, vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled, vk::MemoryPropertyFlagBits::eDeviceLocal, textureImage, textureImageMemory);
-
-    transitionImageLayout(textureImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal);
-    copyBufferToImage(stagingBuffer, textureImage, static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight));
-    transitionImageLayout(textureImage, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
-}
-
-void VulkanApp::createImage(uint32_t width, uint32_t height, vk::Format format, vk::ImageTiling tiling, vk::ImageUsageFlags usage, vk::MemoryPropertyFlags properties, vk::raii::Image& image, vk::raii::DeviceMemory& imageMemory)
-{
-    vk::ImageCreateInfo imageInfo{
-        /*
-            tells Vulkan with what kind of coordinate system the texels in the image are going to be addressed. It is possible to create 1D, 2D and 3D images. 
-            One dimensional images can be used to store an array of data or gradient, 
-            two dimensional images are mainly used for textures, 
-            and three dimensional images can be used to store voxel volumes
-        */
-        .imageType = vk::ImageType::e2D,
-        .format = format,
-        .extent = {width, height, 
-        //  The extent field specifies the dimensions of the image, basically how many texels there are on each axis. That’s why depth must be 1 instead of 0
-        1},
-        .mipLevels = 1,
-        .arrayLayers = 1,
-        // The samples flag is related to multisampling. This is only relevant for images that will be used as attachments, so stick to one sample. 
+    vk::AttachmentDescription colorAttachment{
+        .format = swapChainImageFormat,
         .samples = vk::SampleCountFlagBits::e1,
         /*
-            VK_IMAGE_TILING_LINEAR: Texels are laid out in row-major order like our pixels array
-            VK_IMAGE_TILING_OPTIMAL: Texels are laid out in an implementation defined order for optimal access
+            VK_ATTACHMENT_LOAD_OP_LOAD: Preserve the existing contents of the attachment
+            VK_ATTACHMENT_LOAD_OP_CLEAR: Clear the values to a constant at the start
+            VK_ATTACHMENT_LOAD_OP_DONT_CARE: Existing contents are undefined; we don't care about them
         */
-        .tiling = tiling,
-        .usage = usage,
-        .sharingMode = vk::SharingMode::eExclusive,
-        // The image will only be used by one queue family: the one that supports graphics (and therefore also) transfer operations.
-        .queueFamilyIndexCount = 0,
-        .pQueueFamilyIndices = {},
-        .initialLayout = vk::ImageLayout::eUndefined
-    };
-
-    image = vk::raii::Image(device, imageInfo);
-    vk::MemoryRequirements memRequirements = image.getMemoryRequirements();
-    vk::MemoryAllocateInfo allocInfo{
-        .allocationSize = memRequirements.size,
-        .memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties)
-    };
-    imageMemory = vk::raii::DeviceMemory(device, allocInfo);
-    image.bindMemory(imageMemory, 0);
-}
-
-vk::raii::CommandBuffer VulkanApp::beginSingleTimeCommands()
-{
-    vk::CommandBufferAllocateInfo allocInfo{
-        .commandPool = commandPool,
-        .level = vk::CommandBufferLevel::ePrimary,
-        .commandBufferCount = 1
-    };
-    vk::raii::CommandBuffer commandBuffer = std::move(vk::raii::CommandBuffers(device, allocInfo).front());
-    commandBuffer.begin(vk::CommandBufferBeginInfo{
-        .flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit
-    });
-
-    return commandBuffer;
-}
-
-void VulkanApp::endSingleTimeCommands(vk::raii::CommandBuffer& commandBuffer)
-{
-    commandBuffer.end();
-    queue.submit(vk::SubmitInfo{
-        .commandBufferCount = 1,
-        .pCommandBuffers = &*commandBuffer
-        }, nullptr);
-    queue.waitIdle();
-}
-
-void VulkanApp::transitionImageLayout(const vk::raii::Image& image, vk::ImageLayout oldLayout, vk::ImageLayout newLayout)
-{
-    auto commandBuffer = beginSingleTimeCommands();
-    vk::ImageMemoryBarrier barrier{
-        .oldLayout = oldLayout,
-        .newLayout = newLayout,
-        .image = image,
-        .subresourceRange = {
-            .aspectMask = vk::ImageAspectFlagBits::eColor,
-            .baseMipLevel = 0,
-            .levelCount = 1,
-            .baseArrayLayer = 0,
-            .layerCount = 1
-        }
-    };
-    vk::PipelineStageFlags sourceStage;
-    vk::PipelineStageFlags destinationStage;
-    if (oldLayout == vk::ImageLayout::eUndefined && 
+        .loadOp = vk::AttachmentLoadOp::eClear,
         /*
-            There is actually a special type of image layout that supports all operations, VK_IMAGE_LAYOUT_GENERAL. 
-            The problem with it, of course, is that it doesn’t necessarily offer the best performance for any operation. 
-            It is required for some special cases, like using an image as both input and output, or for reading an image after it has left the preinitialized layout.
+            VK_ATTACHMENT_STORE_OP_STORE: Rendered contents will be stored in memory and can be read later
+            VK_ATTACHMENT_STORE_OP_DONT_CARE: Contents of the framebuffer will be undefined after the rendering operation
         */
-        newLayout == vk::ImageLayout::eTransferDstOptimal)
+        .storeOp = vk::AttachmentStoreOp::eStore,
+        .stencilLoadOp = vk::AttachmentLoadOp::eDontCare,
+        .stencilStoreOp = vk::AttachmentStoreOp::eDontCare,
+        /*
+            VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL: Images used as color attachment
+            VK_IMAGE_LAYOUT_PRESENT_SRC_KHR: Images to be presented in the swap chain
+            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL: Images to be used as destination for a memory copy operation
+        */
+        .initialLayout = vk::ImageLayout::eUndefined,
+        .finalLayout = vk::ImageLayout::ePresentSrcKHR
+    };
+
+    vk::AttachmentReference colorAttachmentRef{
+        .attachment = 0,
+        .layout = vk::ImageLayout::eColorAttachmentOptimal
+    };
+
+    vk::SubpassDependency dependency{
+        .srcSubpass = vk::SubpassExternal,
+        .dstSubpass = 0,
+        .srcStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput,
+        .dstStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput,
+        .srcAccessMask = {},
+        .dstAccessMask = vk::AccessFlagBits::eColorAttachmentWrite
+    };
+
+    vk::SubpassDescription subpass{
+        .pipelineBindPoint = vk::PipelineBindPoint::eGraphics,
+        .colorAttachmentCount = 1,
+        /*
+            pInputAttachments: Attachments that are read from a shader
+            pResolveAttachments: Attachments used for multisampling color attachments
+            pDepthStencilAttachment: Attachment for depth and stencil data
+            pPreserveAttachments: Attachments that are not used by this subpass, but for which the data must be preserved
+        */
+        .pColorAttachments = &colorAttachmentRef
+    };
+
+    vk::RenderPassCreateInfo renderPassInfo{
+        .attachmentCount = 1,
+        .pAttachments = &colorAttachment,
+        .subpassCount = 1,
+        .pSubpasses = &subpass,
+        .dependencyCount = 1,
+        .pDependencies = &dependency
+    };
+
+    renderPass = device.createRenderPass(renderPassInfo);
+}
+
+void VulkanApp::createFramebuffers()
+{
+    swapChainFramebuffers.clear();
+    for (size_t i = 0; i < swapChainImageViews.size(); ++i)
     {
-        barrier.srcAccessMask = {};
-        barrier.dstAccessMask = vk::AccessFlagBits::eTransferWrite;
-
-        sourceStage = vk::PipelineStageFlagBits::eTopOfPipe;
-        destinationStage = vk::PipelineStageFlagBits::eTransfer;
+        vk::ImageView attachments[] = {
+            *swapChainImageViews[i]
+        };
+        vk::FramebufferCreateInfo framebufferInfo{
+            .renderPass = renderPass,
+            .attachmentCount = 1,
+            .pAttachments = attachments,
+            .width = swapChainExtent.width,
+            .height = swapChainExtent.height,
+            .layers = 1
+        };
+        swapChainFramebuffers.push_back(std::move(device.createFramebuffer(framebufferInfo)));
     }
-    else if (oldLayout == vk::ImageLayout::eTransferDstOptimal && newLayout == vk::ImageLayout::eShaderReadOnlyOptimal)
-    {
-        barrier.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
-        barrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
-
-        sourceStage = vk::PipelineStageFlagBits::eTransfer;
-        destinationStage = vk::PipelineStageFlagBits::eFragmentShader;
-    }
-    else
-    {
-        throw std::invalid_argument("unsupported layout transition!");
-    }
-    commandBuffer.pipelineBarrier(
-        /*
-            https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/chap7.html#synchronization-access-types-supported
-        */
-        // The first parameter after the command buffer specifies in which pipeline stage the operations occur that should happen before the barrier.
-        sourceStage, 
-        // The second parameter specifies the pipeline stage in which operations will wait on the barrier. 
-        destinationStage, {}, {}, nullptr, barrier);
-    endSingleTimeCommands(commandBuffer);
-}
-
-void VulkanApp::copyBufferToImage(const vk::raii::Buffer& buffer, vk::raii::Image& image, uint32_t width, uint32_t height)
-{
-    auto commandBuffer = beginSingleTimeCommands();
-    vk::BufferImageCopy region{
-        .bufferOffset = 0,
-
-        /*
-            The bufferRowLength and bufferImageHeight fields specify how the pixels are laid out in memory. 
-            For example, you could have some padding bytes between rows of the image.
-        */
-        .bufferRowLength = 0,
-        .bufferImageHeight = 0,
-
-        .imageSubresource = {
-            .aspectMask = vk::ImageAspectFlagBits::eColor,
-            .mipLevel = 0,
-            .baseArrayLayer = 0,
-            .layerCount = 1
-        },
-        .imageOffset = {
-            .x = 0,
-            .y = 0,
-            .z = 0
-        },
-        .imageExtent = {
-            .width = width,
-            .height = height,
-            .depth = 1
-        }
-    };
-    commandBuffer.copyBufferToImage(buffer, image, vk::ImageLayout::eTransferDstOptimal, {region});
-    endSingleTimeCommands(commandBuffer);
-}
-
-void VulkanApp::createTextureImageView()
-{
-    textureImageView = createImageView(textureImage, vk::Format::eR8G8B8A8Srgb);
-}
-
-vk::raii::ImageView VulkanApp::createImageView(vk::raii::Image& image, vk::Format format)
-{
-    /*
-        createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
-        createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
-        createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
-        createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
-
-        Each component (r, g, b, a) in the components field specifies the mapping method of the image color channel.
-        VK_COMPONENT_SWIZZLE_IDENTITY indicates no swapping, that is, the red channel remains red, the green channel remains green, and so on.
-        Vulkan allows the order of image channels to be adjusted through component swapping (Swizzle) without modifying the image data itself. This is very useful in the following scenarios:
-            Format mismatch: When the image format does not match the channel order expected by the shader (for example, the image is stored as BGR, but the shader expects RGB).
-            Monochrome channel: Map multiple channels to the same value (for example, set the Alpha channel as the red channel).
-            Simplify data processing: Avoid preprocessing image data on the CPU side.
-    */
-
-    vk::ImageViewCreateInfo viewInfo{
-        .image = image,
-        .viewType = vk::ImageViewType::e2D,
-        .format = format,
-        .subresourceRange = {
-            .aspectMask = vk::ImageAspectFlagBits::eColor,
-            .baseMipLevel = 0,
-            .levelCount = 1,
-            .baseArrayLayer = 0,
-            .layerCount = 1
-        }
-    };
-
-    return vk::raii::ImageView(device, viewInfo);
-}
-
-void VulkanApp::createTextureSampler()
-{
-    vk::PhysicalDeviceProperties properties = physicalDevice.getProperties();
-    vk::SamplerCreateInfo samplerInfo{
-        // Magnification concerns the oversampling problem describes above, and minification concerns undersampling. 
-        .magFilter = vk::Filter::eLinear,
-        .minFilter = vk::Filter::eLinear,
-
-        .mipmapMode = vk::SamplerMipmapMode::eLinear,
-
-        /*
-            VK_SAMPLER_ADDRESS_MODE_REPEAT: Repeat the texture when going beyond the image dimensions.
-            VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT: Like repeat, but inverts the coordinates to mirror the image when going beyond the dimensions.
-            VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE: Take the color of the edge closest to the coordinate beyond the image dimensions.
-            VK_SAMPLER_ADDRESS_MODE_MIRROR_CLAMP_TO_EDGE: Like clamp to edge, but instead uses the edge opposite to the closest edge.
-            VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER: Return a solid color when sampling beyond the dimensions of the image.
-        */
-        .addressModeU = vk::SamplerAddressMode::eRepeat,
-        .addressModeV = vk::SamplerAddressMode::eRepeat,
-        .addressModeW = vk::SamplerAddressMode::eRepeat,
-
-        .mipLodBias = 0,
-        .anisotropyEnable = vk::True,
-        .maxAnisotropy = properties.limits.maxSamplerAnisotropy,
-
-        /*
-            If a comparison function is enabled, then texels will first be compared to a value, and the result of that comparison is used in filtering operations. 
-            This is mainly used for percentage-closer filtering on shadow maps.
-        */
-        .compareEnable = vk::False,
-        .compareOp = vk::CompareOp::eAlways,
-        /*
-            The borderColor field specifies which color is returned when sampling beyond the image with clamp to border addressing mode. 
-            It is possible to return black, white or transparent in either float or int formats. You cannot specify an arbitrary color.
-        */
-        .borderColor = vk::BorderColor::eIntOpaqueBlack,
-        /*
-            The unnormalizedCoordinates field specifies which coordinate system you want to use to address texels in an image. 
-            If this field is VK_TRUE, then you can simply use coordinates within the [0, texWidth) and [0, texHeight) range. If it is VK_FALSE, then the texels are addressed using the [0, 1) range on all axes. 
-            Real-world applications almost always use normalized coordinates, because then it’s possible to use textures of varying resolutions with the exact same coordinates.
-        */
-        .unnormalizedCoordinates = vk::False
-    };
-    textureSampler = vk::raii::Sampler(device, samplerInfo);
 }
