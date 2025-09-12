@@ -1222,11 +1222,20 @@ void VulkanApp::createRenderPass()
     };
 
     vk::SubpassDependency dependency{
+        // It indicates that the source of dependence is not a subpass within the render pass, but outside the render-pass (such as the command stream, present operation, or other queues/commands mentioned earlier).
         .srcSubpass = vk::SubpassExternal,
+        // The target is the subpass (the first subpass) with index 0 in the render pass.
         .dstSubpass = 0,
+
+        /*
+            Two subpasses run in parallel, dstSubpass needs to wait for srcSubpass to complete its srcStageMask before it can proceed when it reaches dstStageMask.
+        */
         .srcStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput,
         .dstStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput,
+
+        // All Vulkan memory access types used by srcSubpass
         .srcAccessMask = {},
+        // All Vulkan memory access used by dstSubpass
         .dstAccessMask = vk::AccessFlagBits::eColorAttachmentWrite
     };
 

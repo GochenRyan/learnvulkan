@@ -417,8 +417,7 @@ void VulkanApp::createSurface()
 
 void VulkanApp::createGraphicPipeline()
 {
-    //auto shaderCode = readFile("Assets/Shader/HelloTriangle/slang.spv");
-    auto shaderCode = readFile(ASSETS_SRC_DIR "/Shader/LoadingModel/slang.spv");
+    auto shaderCode = readFile(ASSETS_SRC_DIR "/Shader/DeferredRendering/deferred.spv");
     vk::raii::ShaderModule shaderModule = createShaderModule(shaderCode);
 
     /*
@@ -440,16 +439,7 @@ void VulkanApp::createGraphicPipeline()
         .pName = "fragMain"
     };
 
-    vk::PipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo , fragShaderStageInfo };
-
-    auto bindingDescription = Vertex::getBindingDescription();
-    auto attributeDescriptions = Vertex::getAttributeDescriptions();
-    vk::PipelineVertexInputStateCreateInfo vertexInputInfo{
-        .vertexBindingDescriptionCount = 1,
-        .pVertexBindingDescriptions = &bindingDescription,
-        .vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size()),
-        .pVertexAttributeDescriptions = attributeDescriptions.data()
-    };
+    std::array<vk::PipelineShaderStageCreateInfo, 2> shaderStages = { vertShaderStageInfo , fragShaderStageInfo };
     /*
         The former is specified in the topology member and can have values like:
             VK_PRIMITIVE_TOPOLOGY_POINT_LIST: points from vertices
@@ -463,15 +453,6 @@ void VulkanApp::createGraphicPipeline()
         .primitiveRestartEnable = vk::False
     };
 
-    /*vk::Viewport viewport{
-        .x = 0,
-        .y = 0,
-        .width = static_cast<float>(swapChainExtent.width),
-        .height = static_cast<float>(swapChainExtent.height),
-        .minDepth = 0,
-        .maxDepth = 1
-    };*/
-
     std::vector<vk::DynamicState> dynamicStates = {
         vk::DynamicState::eViewport,
         vk::DynamicState::eScissor
@@ -483,7 +464,7 @@ void VulkanApp::createGraphicPipeline()
 
     vk::PipelineViewportStateCreateInfo viewportStateInfo{ .viewportCount = 1, .scissorCount = 1 };
 
-    vk::PipelineRasterizationStateCreateInfo rasterizerInfo{
+    vk::PipelineRasterizationStateCreateInfo rasterizerCI{
         .depthClampEnable = vk::False,
         .rasterizerDiscardEnable = vk::False,
         .polygonMode = vk::PolygonMode::eFill,
@@ -515,12 +496,6 @@ void VulkanApp::createGraphicPipeline()
 
     vk::PipelineColorBlendAttachmentState colorBlendAttachment{
         .blendEnable = vk::False,
-        .srcColorBlendFactor = vk::BlendFactor::eSrcAlpha,
-        .dstColorBlendFactor = vk::BlendFactor::eOneMinusSrcAlpha,
-        .colorBlendOp = vk::BlendOp::eAdd,
-        .srcAlphaBlendFactor = vk::BlendFactor::eOne,
-        .dstAlphaBlendFactor = vk::BlendFactor::eZero,
-        .alphaBlendOp = vk::BlendOp::eAdd,
         .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA,
     };
     vk::PipelineColorBlendStateCreateInfo colorBlendingInfo{ 
@@ -541,13 +516,15 @@ void VulkanApp::createGraphicPipeline()
     };
     pipelineLayout = vk::raii::PipelineLayout(device, pipelineLayoutInfo);
 
-    vk::GraphicsPipelineCreateInfo pipelineInfo{
-        .stageCount = 2,
-        .pStages = shaderStages,
-        .pVertexInputState = &vertexInputInfo,
+    vk::PipelineVertexInputStateCreateInfo emptyInputState{};
+
+    vk::GraphicsPipelineCreateInfo pipelineCI{
+        .stageCount = static_cast<uint32_t>(shaderStages.size()),
+        .pStages = shaderStages.data(),
+        .pVertexInputState = &emptyInputState,
         .pInputAssemblyState = &inputAssembly,
         .pViewportState = &viewportStateInfo,
-        .pRasterizationState = &rasterizerInfo,
+        .pRasterizationState = &rasterizerCI,
         .pMultisampleState = &multisamplingInfo,
         .pDepthStencilState = &depthStencil,
         .pColorBlendState = &colorBlendingInfo,
@@ -564,7 +541,51 @@ void VulkanApp::createGraphicPipeline()
         .basePipelineIndex = -1
     };
 
-    graphicsPipeline = vk::raii::Pipeline(device, nullptr, pipelineInfo);
+    // The vertex coordinates of the fullscreen triangle are generated in a clockwise sequence
+    rasterizerCI.cullMode = vk::CullModeFlagBits::eFront;
+    // Final fullscreen composition pass pipeline
+    pipelines.composition = device.createGraphicsPipeline(nullptr, pipelineCI);
+
+    auto bindingDescription = Vertex::getBindingDescription();
+    auto attributeDescriptions = Vertex::getAttributeDescriptions();
+    vk::PipelineVertexInputStateCreateInfo vertexInputCI{
+        .vertexBindingDescriptionCount = 1,
+        .pVertexBindingDescriptions = &bindingDescription,
+        .vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size()),
+        .pVertexAttributeDescriptions = attributeDescriptions.data()
+    };
+    pipelineCI.pVertexInputState = &vertexInputCI;
+    rasterizerCI.cullMode = vk::CullModeFlagBits::eBack;
+
+    // Offscreen pipeline
+
+    auto mrtShaderCode = readFile(ASSETS_SRC_DIR "/Shader/DeferredRendering/mrt.spv");
+    vk::raii::ShaderModule mrtShaderModule = createShaderModule(mrtShaderCode);
+
+    vk::PipelineShaderStageCreateInfo mrtVertShaderStageInfo{
+        .stage = vk::ShaderStageFlagBits::eVertex,
+        .module = mrtShaderModule,
+        .pName = "vertMain"
+    };
+
+    vk::PipelineShaderStageCreateInfo mrtFragShaderStageInfo{
+        .stage = vk::ShaderStageFlagBits::eFragment,
+        .module = mrtShaderModule,
+        .pName = "fragMain"
+    };
+
+    std::array<vk::PipelineShaderStageCreateInfo, 2> mrtShaderStages = { mrtVertShaderStageInfo , mrtFragShaderStageInfo };
+    pipelineCI.renderPass = offScreenFramebuffer.renderPass;
+
+    std::array<vk::PipelineColorBlendAttachmentState, 3> blendAttachmentStates = {
+        vk::PipelineColorBlendAttachmentState {.blendEnable = vk::False, .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA,},
+        vk::PipelineColorBlendAttachmentState {.blendEnable = vk::False, .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA,},
+        vk::PipelineColorBlendAttachmentState {.blendEnable = vk::False, .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA,}
+    };
+    colorBlendingInfo.attachmentCount = static_cast<uint32_t>(blendAttachmentStates.size());
+    colorBlendingInfo.pAttachments = blendAttachmentStates.data();
+
+    pipelines.offscreen = device.createGraphicsPipeline(nullptr, pipelineCI);
 }
 
 std::vector<char> VulkanApp::readFile(std::string_view filePath)
@@ -633,37 +654,28 @@ void VulkanApp::recordCommandBuffer(uint32_t imageIndex)
 {
     commandBuffers[currentFrame].begin({});
 
-    std::array < vk::ClearValue, 2> clearValues{
-        vk::ClearColorValue(0.0f, 0.0f, 0.0f, 1.0f),
-        vk::ClearDepthStencilValue(1.0f, 0)
-    };
-    vk::RenderPassBeginInfo renderPassbeginInfo{
-        .renderPass = renderPass,
-        .framebuffer = swapChainFramebuffers[imageIndex],
-        .renderArea = {.offset = { 0, 0 }, .extent = swapChainExtent },
-        .clearValueCount = static_cast<uint32_t>(clearValues.size()),
-        .pClearValues = clearValues.data()
-    };
+    // First render pass : Offscreen pass to fill deferred attachments
+    {
+        std::array < vk::ClearValue, 4> clearValues{
+            vk::ClearColorValue(0.0f, 0.0f, 0.0f, 0.0f),
+            vk::ClearColorValue(0.0f, 0.0f, 0.0f, 0.0f),
+            vk::ClearColorValue(0.0f, 0.0f, 0.0f, 0.0f),
+            vk::ClearDepthStencilValue(1.0f, 0)
+        };
+    
+        vk::RenderPassBeginInfo renderPassbeginInfo{
+            .renderPass = offScreenFramebuffer.renderPass,
+            .framebuffer = offScreenFramebuffer.framebuffer,
+            .renderArea = {.offset = { 0, 0 }, .extent = { offScreenFramebuffer.width, offScreenFramebuffer.height } },
+            .clearValueCount = static_cast<uint32_t>(clearValues.size()),
+            .pClearValues = clearValues.data()
+        };
 
-    commandBuffers[currentFrame].beginRenderPass(renderPassbeginInfo, vk::SubpassContents::eInline);
-    commandBuffers[currentFrame].bindPipeline(vk::PipelineBindPoint::eGraphics, *graphicsPipeline);
-    commandBuffers[currentFrame].setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(swapChainExtent.width), static_cast<float>(swapChainExtent.height), 0.0f, 1.0f));
-    commandBuffers[currentFrame].setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), swapChainExtent));
-    commandBuffers[currentFrame].bindVertexBuffers(0, *vertexBuffer, { 0 });
-    commandBuffers[currentFrame].bindIndexBuffer(*indexBuffer, 0, vk::IndexType::eUint32);
-    commandBuffers[currentFrame].bindDescriptorSets(
-        // Unlike vertex and index buffers, descriptor sets are not unique to graphics pipelines. Therefore, we need to specify if we want to bind descriptor sets to the graphics or compute pipeline. 
-        vk::PipelineBindPoint::eGraphics, 
-        // The layout that the descriptors are based on. 
-        pipelineLayout, 
-        // The index of the first descriptor set
-        0, 
-        *descriptorSets[currentFrame], 
-        nullptr);
-    //commandBuffers[currentFrame].draw(3, 1, 0, 0);
-    commandBuffers[currentFrame].drawIndexed(indices.size(), 1, 0, 0, 0);
-    commandBuffers[currentFrame].endRenderPass();
-    commandBuffers[currentFrame].end();
+        commandBuffers[currentFrame].beginRenderPass(renderPassbeginInfo, vk::SubpassContents::eInline);
+        commandBuffers[currentFrame].setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(offScreenFramebuffer.width), static_cast<float>(offScreenFramebuffer.height), 0.0f, 1.0f));
+        commandBuffers[currentFrame].setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), vk::Extent2D(offScreenFramebuffer.width, offScreenFramebuffer.height)));
+        commandBuffers[currentFrame].bindPipeline(vk::PipelineBindPoint::eGraphics, *pipelines.offscreen);
+    }
 }
 
 void VulkanApp::transition_image_layout(uint32_t imageIndex, vk::ImageLayout oldLayout, vk::ImageLayout newLayout, vk::AccessFlags2 srcAccessMask, vk::AccessFlags2 dstAccessMask, vk::PipelineStageFlags2 srcStageMask, vk::PipelineStageFlags2 dstStageMask)
@@ -1041,6 +1053,7 @@ void VulkanApp::createIndexBuffer()
 void VulkanApp::createDescriptorSetLayout()
 {
     std::array bindings = {
+        // Binding 0 : Vertex shader uniform buffer
         vk::DescriptorSetLayoutBinding {
             .binding = 0,
             .descriptorType = vk::DescriptorType::eUniformBuffer,
@@ -1048,9 +1061,34 @@ void VulkanApp::createDescriptorSetLayout()
             .stageFlags = vk::ShaderStageFlagBits::eVertex,
             .pImmutableSamplers = nullptr
         },
+        // Binding 1 : Position texture target / Scene colormap
         vk::DescriptorSetLayoutBinding {
             .binding = 1,
             .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+            .descriptorCount = 1,
+            .stageFlags = vk::ShaderStageFlagBits::eFragment,
+            .pImmutableSamplers = nullptr
+        },
+        // Binding 2 : Normals texture target
+        vk::DescriptorSetLayoutBinding {
+            .binding = 2,
+            .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+            .descriptorCount = 1,
+            .stageFlags = vk::ShaderStageFlagBits::eFragment,
+            .pImmutableSamplers = nullptr
+        },
+        // Binding 3 : Albedo texture target
+        vk::DescriptorSetLayoutBinding {
+            .binding = 3,
+            .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+            .descriptorCount = 1,
+            .stageFlags = vk::ShaderStageFlagBits::eFragment,
+            .pImmutableSamplers = nullptr
+        },
+        // Binding 4 : Fragment shader uniform buffer
+        vk::DescriptorSetLayoutBinding {
+            .binding = 4,
+            .descriptorType = vk::DescriptorType::eUniformBuffer,
             .descriptorCount = 1,
             .stageFlags = vk::ShaderStageFlagBits::eFragment,
             .pImmutableSamplers = nullptr
@@ -1124,65 +1162,7 @@ void VulkanApp::createDescriptorPool()
 
 void VulkanApp::createDescriptorSets()
 {
-    std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, *descriptorSetLayout);
-    vk::DescriptorSetAllocateInfo allocInfo{
-        .descriptorPool = descriptorPool,
-        .descriptorSetCount = static_cast<uint32_t>(layouts.size()),
-        .pSetLayouts = layouts.data()
-    };
-
-    descriptorSets.clear();
-    descriptorSets = device.allocateDescriptorSets(allocInfo);
-
-    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
-    {
-        vk::DescriptorBufferInfo bufferInfo{
-            .buffer = uniformBuffers[i],
-            .offset = 0,
-            .range = sizeof(UniformBufferObject)
-        };
-
-        vk::DescriptorImageInfo imageInfo{
-            .sampler = textureSampler,
-            .imageView = textureImageView,
-            .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal
-        };
-
-        std::array descriptorWrites{
-            vk::WriteDescriptorSet{
-                /*
-    *             The first two fields specify the descriptor set to update and the binding.
-                */
-                .dstSet = descriptorSets[i],
-                // Remember that descriptors can be arrays, so we also need to specify the first index in the array that we want to update. 
-                // We're not using an array, so the index is simply 0.
-                .dstBinding = 0,
-
-                // It's possible to update multiple descriptors at once in an array, starting at index dstArrayElement.
-                .dstArrayElement = 0,
-                // The descriptorCount field specifies how many array elements you want to update.
-                .descriptorCount = 1,
-                .descriptorType = vk::DescriptorType::eUniformBuffer,
-                /*
-                     The pBufferInfo field is used for descriptors that refer to buffer data,
-                     pImageInfo is used for descriptors that refer to image data,
-                     and pTexelBufferView is used for descriptors that refer to buffer views.
-                     Our descriptor is based on buffers, so we're using pBufferInfo.
-                */
-                .pBufferInfo = &bufferInfo
-            },
-            vk::WriteDescriptorSet{
-                .dstSet = descriptorSets[i],
-                .dstBinding = 1,
-                .dstArrayElement = 0,
-                .descriptorCount = 1,
-                .descriptorType = vk::DescriptorType::eCombinedImageSampler,
-                .pImageInfo = &imageInfo
-            }
-        };
-
-        device.updateDescriptorSets(descriptorWrites, {});
-    }
+    
 }
 
 // todo: Try to experiment with this by creating a setupCommandBuffer that the helper functions record commands into, and add a flushSetupCommands to execute the commands that have been recorded so far. 
@@ -1815,4 +1795,181 @@ void VulkanApp::createFramebuffers()
         };
         swapChainFramebuffers.push_back(std::move(device.createFramebuffer(framebufferInfo)));
     }
+}
+
+void VulkanApp::createoffScreenFramebuffer()
+{
+    /*
+        The compromise between "picture quality/performance/compatibility" and the specific application requirements (shadow map, off-screen post-processing, texture mapping, etc.)
+            shadow maps, cube map faces, GI path caching, or certain post-processing (such as the intermediate buffer of bloom) typically use fixed-resolution textures (common:) (512/1024/2048/4096), 
+            because these effects have fixed resolution requirements or use power sizes to be consistent with mipmap/filtering
+            The window size will change as the user makes adjustments. If the off-screen buffer is fixed to a common value (such as 2048), 
+            it can avoid rebuilding resources each time the window is resized, thereby simplifying the logic/reducing jitter
+    */
+    offScreenFramebuffer.width = 2048;
+    offScreenFramebuffer.height = 2048;
+
+    /*
+        Color attachments
+    */
+
+    // (World space) Positions
+    createAttachment(vk::Format::eR16G16B16A16Sfloat, vk::ImageUsageFlagBits::eColorAttachment, &offScreenFramebuffer.position);
+    // (World space) Normals
+    createAttachment(vk::Format::eR16G16B16A16Sfloat, vk::ImageUsageFlagBits::eColorAttachment, &offScreenFramebuffer.normal);
+    // Albedo (color)
+    createAttachment(vk::Format::eR8G8B8A8Unorm, vk::ImageUsageFlagBits::eColorAttachment, &offScreenFramebuffer.albedo);
+
+    // Depth attachment
+    auto depthFormat = findDepthFormat();
+    createAttachment(depthFormat, vk::ImageUsageFlagBits::eDepthStencilAttachment, &offScreenFramebuffer.depth);
+
+    // Set up separate renderpass with references to the color and depth attachments
+    std::array<vk::AttachmentDescription, 4> attachmentDescs = {};
+    for (size_t i = 0; i < 4; ++i)
+    {
+        attachmentDescs[i].samples = vk::SampleCountFlagBits::e1;
+        attachmentDescs[i].loadOp = vk::AttachmentLoadOp::eClear;
+        attachmentDescs[i].storeOp = vk::AttachmentStoreOp::eStore;
+        attachmentDescs[i].stencilLoadOp = vk::AttachmentLoadOp::eDontCare;
+        attachmentDescs[i].stencilStoreOp = vk::AttachmentStoreOp::eDontCare;
+        if (i == 3)
+        {
+            attachmentDescs[i].initialLayout = vk::ImageLayout::eUndefined;
+            attachmentDescs[i].finalLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal;
+        }
+        else
+        {
+            attachmentDescs[i].initialLayout = vk::ImageLayout::eUndefined;
+            attachmentDescs[i].finalLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+        }
+    }
+
+    // Formats
+    attachmentDescs[0].format = offScreenFramebuffer.position.format;
+    attachmentDescs[1].format = offScreenFramebuffer.normal.format;
+    attachmentDescs[2].format = offScreenFramebuffer.albedo.format;
+    attachmentDescs[3].format = offScreenFramebuffer.depth.format;
+
+    // AttachmentReference
+    std::vector<vk::AttachmentReference> colorReferences;
+    colorReferences.emplace_back(0, vk::ImageLayout::eAttachmentOptimal);
+    colorReferences.emplace_back(1, vk::ImageLayout::eAttachmentOptimal);
+    colorReferences.emplace_back(2, vk::ImageLayout::eAttachmentOptimal);
+
+    vk::AttachmentReference depthReference = {};
+    depthReference.attachment = 3;
+    depthReference.layout = vk::ImageLayout::eDepthStencilAttachmentOptimal;
+
+    vk::SubpassDescription subpass = {};
+    subpass.pipelineBindPoint = vk::PipelineBindPoint::eGraphics;
+    subpass.pColorAttachments = colorReferences.data();
+    subpass.colorAttachmentCount = static_cast<uint32_t>(colorReferences.size());
+    subpass.pDepthStencilAttachment = &depthReference;
+
+    // Use subpass dependencies for attachment layout transitions
+    std::array<vk::SubpassDependency, 3> dependencies{};
+
+    // Depth
+    dependencies[0].srcSubpass = vk::SubpassExternal;
+    dependencies[0].dstSubpass = 0;
+    dependencies[0].srcStageMask = vk::PipelineStageFlagBits::eEarlyFragmentTests | vk::PipelineStageFlagBits::eLateFragmentTests;
+    dependencies[0].dstStageMask = vk::PipelineStageFlagBits::eEarlyFragmentTests | vk::PipelineStageFlagBits::eLateFragmentTests;
+    dependencies[0].srcAccessMask = vk::AccessFlagBits::eDepthStencilAttachmentWrite;
+    dependencies[0].dstAccessMask = vk::AccessFlagBits::eDepthStencilAttachmentWrite | vk::AccessFlagBits::eDepthStencilAttachmentRead;
+    // Color
+    dependencies[1].srcSubpass = vk::SubpassExternal;
+    dependencies[1].dstSubpass = 0;
+    dependencies[1].srcStageMask = vk::PipelineStageFlagBits::eBottomOfPipe;
+    dependencies[1].dstStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput;
+    dependencies[1].srcAccessMask = vk::AccessFlagBits::eMemoryRead;
+    dependencies[1].dstAccessMask = vk::AccessFlagBits::eColorAttachmentWrite | vk::AccessFlagBits::eColorAttachmentRead;
+
+    // Color
+    dependencies[2].srcSubpass = 0;
+    dependencies[2].dstSubpass = vk::SubpassExternal;
+    dependencies[2].srcStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput;
+    dependencies[2].dstStageMask = vk::PipelineStageFlagBits::eBottomOfPipe;
+    dependencies[2].srcAccessMask = vk::AccessFlagBits::eColorAttachmentWrite | vk::AccessFlagBits::eColorAttachmentRead;
+    dependencies[2].dstAccessMask = vk::AccessFlagBits::eMemoryRead;
+
+    vk::RenderPassCreateInfo renderPassInfo{
+        .attachmentCount = static_cast<uint32_t>(attachmentDescs.size()),
+        .pAttachments = attachmentDescs.data(),
+        .subpassCount = 1,
+        .pSubpasses = &subpass,
+        .dependencyCount = 3,
+        .pDependencies = dependencies.data()
+    };
+
+    offScreenFramebuffer.renderPass = device.createRenderPass(renderPassInfo);
+
+    std::array<vk::ImageView, 4> attachments{};
+    attachments[0] = offScreenFramebuffer.position.view;
+    attachments[1] = offScreenFramebuffer.normal.view;
+    attachments[2] = offScreenFramebuffer.albedo.view;
+    attachments[3] = offScreenFramebuffer.depth.view;
+
+    vk::FramebufferCreateInfo framebufferCI{
+        .renderPass = offScreenFramebuffer.renderPass,
+        .attachmentCount = static_cast<uint32_t>(attachments.size()),
+        .pAttachments = attachments.data(),
+        .width = offScreenFramebuffer.width,
+        .height = offScreenFramebuffer.height,
+        .layers = 1
+    };
+
+    offScreenFramebuffer.framebuffer = device.createFramebuffer(framebufferCI);
+
+    vk::PhysicalDeviceProperties properties = physicalDevice.getProperties();
+    vk::SamplerCreateInfo samplerInfo{
+        // Magnification concerns the oversampling problem describes above, and minification concerns undersampling. 
+        .magFilter = vk::Filter::eNearest,
+        .minFilter = vk::Filter::eNearest,
+
+        .mipmapMode = vk::SamplerMipmapMode::eLinear,
+
+        /*
+            VK_SAMPLER_ADDRESS_MODE_REPEAT: Repeat the texture when going beyond the image dimensions.
+            VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT: Like repeat, but inverts the coordinates to mirror the image when going beyond the dimensions.
+            VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE: Take the color of the edge closest to the coordinate beyond the image dimensions.
+            VK_SAMPLER_ADDRESS_MODE_MIRROR_CLAMP_TO_EDGE: Like clamp to edge, but instead uses the edge opposite to the closest edge.
+            VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER: Return a solid color when sampling beyond the dimensions of the image.
+        */
+        .addressModeU = vk::SamplerAddressMode::eClampToEdge,
+        .addressModeV = vk::SamplerAddressMode::eClampToEdge,
+        .addressModeW = vk::SamplerAddressMode::eClampToEdge,
+
+        .mipLodBias = 0,
+        .maxAnisotropy = 1.0f,
+        .minLod = 0.0f,
+        .maxLod = 1.0f,
+        .borderColor = vk::BorderColor::eFloatOpaqueWhite
+    };
+    colorSampler = device.createSampler(samplerInfo);
+}
+
+void VulkanApp::createAttachment(vk::Format format, vk::ImageUsageFlagBits usage, FramebufferAttachment* attachment)
+{
+    vk::ImageAspectFlags aspectMask{};
+
+    if (usage & vk::ImageUsageFlagBits::eColorAttachment)
+    {
+        aspectMask = vk::ImageAspectFlagBits::eColor;
+    }
+
+    if (usage & vk::ImageUsageFlagBits::eDepthStencilAttachment)
+    {
+        aspectMask = vk::ImageAspectFlagBits::eDepth;
+        if (format >= vk::Format::eD16UnormS8Uint)
+            aspectMask = vk::ImageAspectFlagBits::eDepth | vk::ImageAspectFlagBits::eStencil;
+    }
+
+    createImage(offScreenFramebuffer.width, offScreenFramebuffer.height, format, vk::ImageTiling::eOptimal, usage | vk::ImageUsageFlagBits::eSampled, vk::MemoryPropertyFlagBits::eDeviceLocal, attachment->image, attachment->mem);
+    vk::ImageViewCreateInfo imageViewCreateInfo{ 
+        .viewType = vk::ImageViewType::e2D, 
+        .format = format,
+        .subresourceRange = { aspectMask, 0, 1, 0, 1 }
+    };
+    attachment->view = device.createImageView(imageViewCreateInfo);
 }

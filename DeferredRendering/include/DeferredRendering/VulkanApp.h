@@ -36,9 +36,10 @@ constexpr bool enableValidationLayers = true;
 struct Vertex
 {
     glm::vec3 pos;
+    glm::vec2 texCoord;
     glm::vec3 color;
     glm::vec3 norm;
-    glm::vec2 texCoord;
+    glm::vec3 tangent;
 
     /*
         A vertex binding describes at which rate to load data from memory throughout the vertices. 
@@ -59,7 +60,7 @@ struct Vertex
             vk::VertexInputRate::eVertex };
     }
 
-    static std::array<vk::VertexInputAttributeDescription, 4> getAttributeDescriptions()
+    static std::array<vk::VertexInputAttributeDescription, 5> getAttributeDescriptions()
     {
         /*
             The **location** parameter references the location directive of the input in the vertex shader.
@@ -78,9 +79,10 @@ struct Vertex
 
         return {
             vk::VertexInputAttributeDescription(0, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, pos)),
-            vk::VertexInputAttributeDescription(1, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, color)),
-            vk::VertexInputAttributeDescription(2, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, norm)),
-            vk::VertexInputAttributeDescription(3, 0, vk::Format::eR32G32Sfloat, offsetof(Vertex, texCoord))
+            vk::VertexInputAttributeDescription(1, 0, vk::Format::eR32G32Sfloat, offsetof(Vertex, texCoord)),
+            vk::VertexInputAttributeDescription(2, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, color)),
+            vk::VertexInputAttributeDescription(3, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, norm)),
+            vk::VertexInputAttributeDescription(4, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, tangent))
         };
     }
 };
@@ -157,6 +159,23 @@ struct UniformBufferObject
     alignas(16) glm::mat4 model;
     alignas(16) glm::mat4 view;
     alignas(16) glm::mat4 proj;
+};
+
+struct FramebufferAttachment
+{
+    vk::raii::Image image = nullptr;
+    vk::raii::DeviceMemory mem = nullptr;
+    vk::raii::ImageView view = nullptr;
+    vk::Format format = {};
+};
+
+struct Framebuffer
+{
+    uint32_t width, height;
+    vk::raii::Framebuffer framebuffer = nullptr;
+    FramebufferAttachment position, normal, albedo;
+    FramebufferAttachment depth;
+    vk::raii::RenderPass renderPass = nullptr;
 };
 
 class VulkanApp final
@@ -244,6 +263,9 @@ private:
     /* Subpass */
     void createRenderPass();
     void createFramebuffers();
+    
+    void createoffScreenFramebuffer();
+    void createAttachment(vk::Format format, vk::ImageUsageFlagBits usage, FramebufferAttachment* attachment);
 private:
     GLFWwindow* window{ nullptr };
 
@@ -273,7 +295,6 @@ private:
 
     std::vector<vk::raii::ImageView> swapChainImageViews;
 
-    vk::raii::Pipeline graphicsPipeline = nullptr;
     vk::raii::PipelineLayout pipelineLayout = nullptr;
 
     vk::raii::CommandPool commandPool = nullptr;
@@ -300,7 +321,6 @@ private:
     std::vector<vk::raii::DeviceMemory> uniformBuffersMemory;
     std::vector<void*> uniformBuffersMapped;
     vk::raii::DescriptorPool descriptorPool = nullptr;
-    std::vector<vk::raii::DescriptorSet> descriptorSets;
 
     vk::raii::Image textureImage = nullptr;
     vk::raii::DeviceMemory textureImageMemory = nullptr;
@@ -316,6 +336,22 @@ private:
 
     vk::raii::RenderPass renderPass = nullptr;
     std::vector<vk::raii::Framebuffer> swapChainFramebuffers;
+
+    Framebuffer offScreenFramebuffer{};
+    vk::raii::Sampler colorSampler = nullptr;
+
+    struct 
+    {
+        vk::raii::Pipeline offscreen = nullptr;
+        vk::raii::Pipeline composition = nullptr;
+    } pipelines;
+
+    struct DescriptorSets {
+        vk::raii::DescriptorSet model = nullptr;
+        vk::raii::DescriptorSet floor = nullptr;
+        vk::raii::DescriptorSet composition = nullptr;
+    };
+    std::array<DescriptorSets, MAX_FRAMES_IN_FLIGHT> descriptorSets;
 public:
     /*
         Although many drivers and platforms trigger VK_ERROR_OUT_OF_DATE_KHR automatically after a window resize, it is not guaranteed to happen. 
