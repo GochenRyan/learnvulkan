@@ -1,4 +1,6 @@
 #pragma once
+#include <DeferredRendering/VulkanBuffer.h>
+
 #include <iostream>
 #include <stdexcept>
 #include <vector>
@@ -143,22 +145,6 @@ struct VertexEqual
                 floatToBits(a.norm.y) == floatToBits(b.norm.y) &&
                 floatToBits(a.norm.z) == floatToBits(b.norm.z);
     }
-};
-
-/*
-    Vulkan expects the data in your structure to be aligned in memory in a specific way, for example:
-        Scalars have to be aligned by N (= 4 bytes given 32-bit floats).
-        A float2 must be aligned by 2N (= 8 bytes)
-        A float3 or float4 must be aligned by 4N (= 16 bytes)
-        A nested structure must be aligned by the base alignment of its members rounded up to a multiple of 16.
-        A float4x4 matrix must have the same alignment as a float4.
-*/
-struct UniformBufferObject 
-{
-    // Its function is to inform the compiler that the memory address of the variable or type must be a multiple of 16, thereby meeting specific hardware or performance requirements
-    alignas(16) glm::mat4 model;
-    alignas(16) glm::mat4 view;
-    alignas(16) glm::mat4 proj;
 };
 
 struct FramebufferAttachment
@@ -317,8 +303,6 @@ private:
 
     vk::raii::DescriptorSetLayout descriptorSetLayout = nullptr;
     
-    std::vector<vk::raii::Buffer> uniformBuffers;
-    std::vector<vk::raii::DeviceMemory> uniformBuffersMemory;
     std::vector<void*> uniformBuffersMapped;
     vk::raii::DescriptorPool descriptorPool = nullptr;
 
@@ -352,6 +336,31 @@ private:
         vk::raii::DescriptorSet composition = nullptr;
     };
     std::array<DescriptorSets, MAX_FRAMES_IN_FLIGHT> descriptorSets;
+
+    struct UniformDataOffscreen {
+        glm::mat4 projection;
+        glm::mat4 model;
+        glm::mat4 view;
+        glm::vec4 instancePos[3];
+    } uniformDataOffscreen;
+
+    struct Light {
+        glm::vec4 position;
+        glm::vec3 color;
+        float radius;
+    };
+
+    struct UniformDataComposition {
+        Light lights[6];
+        glm::vec4 viewPos;
+        int debugDisplayTarget = 0;
+    } uniformDataComposition;
+
+    struct UniformBuffers {
+        VulkanBuffer offscreen;
+        VulkanBuffer composition;
+    };
+    std::array<UniformBuffers, MAX_FRAMES_IN_FLIGHT> uniformBuffers;
 public:
     /*
         Although many drivers and platforms trigger VK_ERROR_OUT_OF_DATE_KHR automatically after a window resize, it is not guaranteed to happen. 

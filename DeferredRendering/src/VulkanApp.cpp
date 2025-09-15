@@ -1103,66 +1103,132 @@ void VulkanApp::createDescriptorSetLayout()
 
 void VulkanApp::createUniformBuffers()
 {
-    uniformBuffers.clear();
-    uniformBuffersMemory.clear();
-    uniformBuffersMapped.clear();
-
-    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
+    for (auto& buffer : uniformBuffers)
     {
-        vk::DeviceSize bufferSize = sizeof(UniformBufferObject);
-        vk::raii::Buffer buffer = nullptr;
-        vk::raii::DeviceMemory bufferMemory = nullptr;
-        createBuffer(bufferSize, vk::BufferUsageFlagBits::eUniformBuffer, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, buffer, bufferMemory);
-        uniformBuffers.emplace_back(std::move(buffer));
-        uniformBuffersMemory.emplace_back(std::move(bufferMemory));
-        uniformBuffersMapped.emplace_back(uniformBuffersMemory[i].mapMemory(0, bufferSize));
+        // Offscreen
+        createBuffer(sizeof(UniformDataOffscreen), vk::BufferUsageFlagBits::eUniformBuffer, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, buffer.offscreen.uniformBuffer, buffer.offscreen.uniformBufferMemory);
+        buffer.offscreen.uniformBuffersMapped = buffer.offscreen.uniformBufferMemory.mapMemory(0, sizeof(UniformDataOffscreen));
+        // Composition
+        createBuffer(sizeof(UniformDataComposition), vk::BufferUsageFlagBits::eUniformBuffer, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, buffer.composition.uniformBuffer, buffer.composition.uniformBufferMemory);
+        buffer.composition.uniformBuffersMapped = buffer.composition.uniformBufferMemory.mapMemory(0, sizeof(UniformDataComposition));
     }
+
+    // Setup instanced model positions
+    uniformDataOffscreen.instancePos[0] = glm::vec4(0.0f);
+    uniformDataOffscreen.instancePos[1] = glm::vec4(-4.0f, 0.0, -4.0f, 0.0f);
+    uniformDataOffscreen.instancePos[2] = glm::vec4(4.0f, 0.0, -4.0f, 0.0f);
 }
 
 void VulkanApp::updateUniformBuffer(uint32_t currentFrame)
 {
-    static auto startTime = std::chrono::high_resolution_clock::now();
-
-    auto currentTime = std::chrono::high_resolution_clock::now();
-    float time = std::chrono::duration<float>(currentTime - startTime).count();
-
-    UniformBufferObject ubo{};
-    // The glm::rotate function takes an existing transformation, rotation angle and rotation axis as parameters.
-    ubo.model = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-    // For the view transformation I've decided to look at the geometry from above at a 45 degree angle. The glm::lookAt function takes the eye position, center position and up axis as parameters.
-    ubo.view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-    // I've chosen to use a perspective projection with a 45 degree vertical field-of-view. The other parameters are the aspect ratio, near and far view planes. 
-    ubo.proj = glm::perspective(glm::radians(45.0f), static_cast<float>(swapChainExtent.width) / static_cast<float>(swapChainExtent.height), 0.1f, 10.0f);
+    uniformDataOffscreen.projection = glm::perspective(glm::radians(60.0f), static_cast<float>(swapChainExtent.width) / static_cast<float>(swapChainExtent.height), 0.1f, 256.0f);
     // GLM was originally designed for OpenGL, where the Y coordinate of the clip coordinates is inverted. The easiest way to compensate for that is to flip the sign on the scaling factor of the Y axis in the projection matrix. 
-    // If you don't do this, then the image will be rendered upside down.
-    ubo.proj[1][1] *= -1;
-    memcpy(uniformBuffersMapped[currentFrame], &ubo, sizeof(ubo));
+    uniformDataOffscreen.projection[1][1] *= -1;
+    uniformDataOffscreen.view = glm::lookAt(glm::vec3(2.15f, 0.3f, -8.75f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+    uniformDataOffscreen.model = glm::mat4(1.0f);
+    memcpy(uniformBuffers[currentFrame].offscreen.uniformBuffersMapped, &uniformDataOffscreen, sizeof(UniformDataOffscreen));
 }
 
 void VulkanApp::createDescriptorPool()
 {
-    std::array poolSize{
+    std::array poolSizes{
         vk::DescriptorPoolSize{
             .type = vk::DescriptorType::eUniformBuffer,
-            .descriptorCount = MAX_FRAMES_IN_FLIGHT
+            .descriptorCount = MAX_FRAMES_IN_FLIGHT * 8
         },
         vk::DescriptorPoolSize{
             .type = vk::DescriptorType::eCombinedImageSampler,
-            .descriptorCount = MAX_FRAMES_IN_FLIGHT
+            .descriptorCount = MAX_FRAMES_IN_FLIGHT * 9
         }
     };
     vk::DescriptorPoolCreateInfo poolInfo{
         .flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
         .maxSets = MAX_FRAMES_IN_FLIGHT,
-        .poolSizeCount = 2,
-        .pPoolSizes = poolSize.data()
+        .poolSizeCount = static_cast<uint32_t>(poolSizes.size()),
+        .pPoolSizes = poolSizes.data()
     };
     descriptorPool = vk::raii::DescriptorPool(device, poolInfo);
 }
 
 void VulkanApp::createDescriptorSets()
 {
-    
+    std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, *descriptorSetLayout);
+    vk::DescriptorSetAllocateInfo allocInfo{
+        .descriptorPool = descriptorPool,
+        .descriptorSetCount = static_cast<uint32_t>(layouts.size()),
+        .pSetLayouts = layouts.data()
+    };
+
+    // Sets per frame, just like the buffers themselves
+    // Image descriptors for the offscreen color attachments
+    vk::DescriptorImageInfo descriptorPosition{
+        .sampler = colorSampler,
+        .imageView = offScreenFramebuffer.position.view,
+        .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal
+    };
+    vk::DescriptorImageInfo descriptorNormal{
+        .sampler = colorSampler,
+        .imageView = offScreenFramebuffer.normal.view,
+        .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal
+    };
+    vk::DescriptorImageInfo descriptorAlbedo{
+        .sampler = colorSampler,
+        .imageView = offScreenFramebuffer.albedo.view,
+        .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal
+    };
+
+    // Model
+    //vk::DescriptorImageInfo descriptorColorMap{
+    //    .sampler = textureSampler,
+    //    .imageView = offScreenFramebuffer.normal.view,
+    //    .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal
+    //};
+    //vk::DescriptorImageInfo descriptorNormalMap{
+    //    .sampler = textureSampler,
+    //    .imageView = offScreenFramebuffer.normal.view,
+    //    .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal
+    //};
+
+
+    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
+    {
+        vk::DescriptorBufferInfo compositionBI{
+            .buffer = uniformBuffers[i].composition.uniformBuffer,
+            .offset = 0,
+            .range = sizeof(UniformDataComposition)
+        };
+        std::vector<vk::WriteDescriptorSet> writeDescriptorSets;
+        // Deferred composition
+        descriptorSets[i].composition = std::move(device.allocateDescriptorSets(allocInfo)[0]);
+        writeDescriptorSets = {
+            // Binding 1 : Position texture target
+            vk::WriteDescriptorSet{ .dstSet = descriptorSets[i].composition, .dstBinding = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &descriptorPosition},
+            // Binding 2 : Normals texture target
+            vk::WriteDescriptorSet{ .dstSet = descriptorSets[i].composition, .dstBinding = 2, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &descriptorNormal},
+            // Binding 3 : Albedo texture target
+            vk::WriteDescriptorSet{ .dstSet = descriptorSets[i].composition, .dstBinding = 3, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &descriptorAlbedo},
+            // Binding 4 : Fragment shader uniform buffer
+            vk::WriteDescriptorSet{ .dstSet = descriptorSets[i].composition, .dstBinding = 4, .descriptorType = vk::DescriptorType::eUniformBuffer, .pBufferInfo = &compositionBI}
+        };
+        device.updateDescriptorSets(writeDescriptorSets, {});
+
+        // Offscreen (scene)
+        // Model
+        //vk::DescriptorBufferInfo offscreenModelBI{
+        //    .buffer = uniformBuffers[i].offscreen.uniformBuffer,
+        //    .offset = 0,
+        //    .range = sizeof(UniformDataOffscreen)
+        //};
+        //descriptorSets[i].model = std::move(device.allocateDescriptorSets(allocInfo)[0]);
+        //writeDescriptorSets = {
+        //    // Binding 0: Vertex shader uniform buffer
+        //    vk::WriteDescriptorSet{ .dstSet = descriptorSets[i].model, .dstBinding = 0, .descriptorType = vk::DescriptorType::eUniformBuffer, .pBufferInfo = &offscreenModelBI},
+        //    // Binding 1: Color map
+        //    vk::WriteDescriptorSet{.dstSet = descriptorSets[i].model, .dstBinding = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &descriptorColorMap},
+        //    // Binding 2: Normal map
+        //    vk::WriteDescriptorSet{.dstSet = descriptorSets[i].model, .dstBinding = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &descriptorNormalMap}
+        //};
+    }
 }
 
 // todo: Try to experiment with this by creating a setupCommandBuffer that the helper functions record commands into, and add a flushSetupCommands to execute the commands that have been recorded so far. 

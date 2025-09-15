@@ -58,16 +58,28 @@ add_custom_target(
     COMMENT "Parsing all shaders..."
 )
 
-# Add commands for each directory
+# Traverse all shader directories
 foreach(shader_dir ${SHADER_DIRS})
-    add_custom_command(
-        TARGET RunScript
-        COMMAND cmd.exe /c "${CMAKE_SOURCE_DIR}/compile.bat" 
-            "${shader_dir}/shader.slang" 
-            "${shader_dir}/slang.spv"
-        WORKING_DIRECTORY "${shader_dir}"
-        COMMENT "Parsing shader in: ${shader_dir}"
-    )
+    # Collect all .slang files in this directory
+    file(GLOB shader_files "${shader_dir}/*.slang")
+
+    # Traverse each .slang file
+    foreach(shader_file ${shader_files})
+        # Get the file name (without extension)
+        get_filename_component(shader_name ${shader_file} NAME_WE)
+
+        # Build the path of the output .spv file
+        set(output_file "${shader_dir}/${shader_name}.spv")
+
+        add_custom_command(
+            TARGET RunScript
+            COMMAND cmd.exe /c "${CMAKE_SOURCE_DIR}/compile.bat"
+                "${shader_file}" 
+                "${output_file}"
+            WORKING_DIRECTORY "${shader_dir}"
+            COMMENT "Parsing shader: ${shader_file}"
+        )
+    endforeach()
 endforeach()
 
 set(FBXSDK_LIB_DIR ${CMAKE_SOURCE_DIR}/ThirdParty/fbxsdk/lib)
