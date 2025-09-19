@@ -675,6 +675,18 @@ void VulkanApp::recordCommandBuffer(uint32_t imageIndex)
         commandBuffers[currentFrame].setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(offScreenFramebuffer.width), static_cast<float>(offScreenFramebuffer.height), 0.0f, 1.0f));
         commandBuffers[currentFrame].setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), vk::Extent2D(offScreenFramebuffer.width, offScreenFramebuffer.height)));
         commandBuffers[currentFrame].bindPipeline(vk::PipelineBindPoint::eGraphics, *pipelines.offscreen);
+
+        // Floor
+        commandBuffers[currentFrame].bindDescriptorSets(
+            // Unlike vertex and index buffers, descriptor sets are not unique to graphics pipelines. Therefore, we need to specify if we want to bind descriptor sets to the graphics or compute pipeline. 
+            vk::PipelineBindPoint::eGraphics,
+            // The layout that the descriptors are based on. 
+            pipelineLayout,
+            // The index of the first descriptor set
+            0,
+            *descriptorSets[currentFrame].floor,
+            nullptr);
+        //models.floor.draw(cmdBuffer);
     }
 }
 
@@ -1016,9 +1028,36 @@ void VulkanApp::createIndexBuffer()
     copyBuffer(stagingBuffer, indexBuffer, bufferSize);
 }
 
+void VulkanApp::createUniformBuffers()
+{
+    for (auto& buffer : uniformBuffers)
+    {
+        // Offscreen
+        createBuffer(sizeof(UniformDataOffscreen), vk::BufferUsageFlagBits::eUniformBuffer, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, buffer.offscreen.uniformBuffer, buffer.offscreen.uniformBufferMemory);
+        buffer.offscreen.uniformBuffersMapped = buffer.offscreen.uniformBufferMemory.mapMemory(0, sizeof(UniformDataOffscreen));
+        // Composition
+        createBuffer(sizeof(UniformDataComposition), vk::BufferUsageFlagBits::eUniformBuffer, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, buffer.composition.uniformBuffer, buffer.composition.uniformBufferMemory);
+        buffer.composition.uniformBuffersMapped = buffer.composition.uniformBufferMemory.mapMemory(0, sizeof(UniformDataComposition));
+    }
+
+    // Setup instanced model positions
+    uniformDataOffscreen.instancePos[0] = glm::vec4(0.0f);
+    uniformDataOffscreen.instancePos[1] = glm::vec4(-4.0f, 0.0, -4.0f, 0.0f);
+    uniformDataOffscreen.instancePos[2] = glm::vec4(4.0f, 0.0, -4.0f, 0.0f);
+}
+
+void VulkanApp::updateUniformBuffer(uint32_t currentFrame)
+{
+    uniformDataOffscreen.projection = glm::perspective(glm::radians(60.0f), static_cast<float>(swapChainExtent.width) / static_cast<float>(swapChainExtent.height), 0.1f, 256.0f);
+    // GLM was originally designed for OpenGL, where the Y coordinate of the clip coordinates is inverted. The easiest way to compensate for that is to flip the sign on the scaling factor of the Y axis in the projection matrix. 
+    uniformDataOffscreen.projection[1][1] *= -1;
+    uniformDataOffscreen.view = glm::lookAt(glm::vec3(2.15f, 0.3f, -8.75f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+    uniformDataOffscreen.model = glm::mat4(1.0f);
+    memcpy(uniformBuffers[currentFrame].offscreen.uniformBuffersMapped, &uniformDataOffscreen, sizeof(UniformDataOffscreen));
+}
 
 /*
-    A descriptor is a way for shaders to freely access resources like buffers and images. 
+    A descriptor is a way for shaders to freely access resources like buffers and images.
     We're going to set up a buffer that contains the transformation matrices and have the vertex shader access them through a descriptor. Usage of descriptors consists of three parts:
         Specify a descriptor set layout during pipeline creation
         Allocate a descriptor set from a descriptor pool
@@ -1030,19 +1069,19 @@ void VulkanApp::createIndexBuffer()
             Vertex/Index: This belongs to the input assembly stage. The GPU requires a continuous vertex stream/index stream, and the access mode is simple (continuous reading, fixed format). Binding buffer + offset directly to IA (input assembly) is low-overhead and intuitive.
             Descriptor (Uniform/Storage/Texture/Sampler) : is the shader anywhere access to the internal resources, may be an array, random access, across the shader stages, different life cycle and align with the format requirements, access pattern is complicated.
         Indirect addressing and indexing are required
-            Shaders often need to access a large number of resources (texture arrays, bindless) by index. The Descriptor provides an intermediate table (descriptor set) - the shader only sees the index/handle, and the actual location of the physical resource is pointed to by the descriptor. 
+            Shaders often need to access a large number of resources (texture arrays, bindless) by index. The Descriptor provides an intermediate table (descriptor set) - the shader only sees the index/handle, and the actual location of the physical resource is pointed to by the descriptor.
             Directly "writing Pointers into the command stream" like vertex does cannot effectively support such dynamic indexing or massive resource collections.
         The lifecycle is different from the reuse strategy
-            Vertex/Index buffering is usually used directly once or several times in the short term; Material maps, Samplers, uniforms and other resources will be reused for a long time after loading. 
+            Vertex/Index buffering is usually used directly once or several times in the short term; Material maps, Samplers, uniforms and other resources will be reused for a long time after loading.
             Descriptor allows long-term unchanging objects (textures) to be updated and reused at one time instead of being rewritten each time a draw is made.
         Driver/hardware predictability and preprocessing
-            The Descriptor layout can describe the expected resource structure of the shader when the pipeline is created, and the driver can pre-allocate the hardware table or perform verification/optimization. 
+            The Descriptor layout can describe the expected resource structure of the shader when the pipeline is created, and the driver can pre-allocate the hardware table or perform verification/optimization.
             It is very difficult for the driver to perform such "pre-compilation" optimization each time vertex/index is bound. Predictability is at the core of the Vulkan performance model.
         Concurrency and Multithreading preparation
-            Descriptor sets can be pre-built/updated in CPU multithreading, and then only low-cost bindings are performed in the rendering hot path. 
+            Descriptor sets can be pre-built/updated in CPU multithreading, and then only low-cost bindings are performed in the rendering hot path.
             Repeatedly modifying a large number of resources during draw will hinder multi-threaded recording and efficient parallelism.
         Support advanced features (dynamic offsets/bindless/push descriptors)
-            The Descriptor system allows functions such as dynamic offset (the same descriptor pointing to different segments of the large buffer) and descriptor indexing (close to bindless), 
+            The Descriptor system allows functions such as dynamic offset (the same descriptor pointing to different segments of the large buffer) and descriptor indexing (close to bindless),
             which cannot be naturally expressed by the traditional vertex/index binding.
         Memory management and fragmentation control
             With the concepts of descriptor pool and sets, the application can control the allocation strategy, reclaim and reset, avoiding uncontrollable allocation by the driver in the hot path.
@@ -1101,49 +1140,24 @@ void VulkanApp::createDescriptorSetLayout()
     descriptorSetLayout = vk::raii::DescriptorSetLayout(device, layoutInfo);
 }
 
-void VulkanApp::createUniformBuffers()
-{
-    for (auto& buffer : uniformBuffers)
-    {
-        // Offscreen
-        createBuffer(sizeof(UniformDataOffscreen), vk::BufferUsageFlagBits::eUniformBuffer, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, buffer.offscreen.uniformBuffer, buffer.offscreen.uniformBufferMemory);
-        buffer.offscreen.uniformBuffersMapped = buffer.offscreen.uniformBufferMemory.mapMemory(0, sizeof(UniformDataOffscreen));
-        // Composition
-        createBuffer(sizeof(UniformDataComposition), vk::BufferUsageFlagBits::eUniformBuffer, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, buffer.composition.uniformBuffer, buffer.composition.uniformBufferMemory);
-        buffer.composition.uniformBuffersMapped = buffer.composition.uniformBufferMemory.mapMemory(0, sizeof(UniformDataComposition));
-    }
-
-    // Setup instanced model positions
-    uniformDataOffscreen.instancePos[0] = glm::vec4(0.0f);
-    uniformDataOffscreen.instancePos[1] = glm::vec4(-4.0f, 0.0, -4.0f, 0.0f);
-    uniformDataOffscreen.instancePos[2] = glm::vec4(4.0f, 0.0, -4.0f, 0.0f);
-}
-
-void VulkanApp::updateUniformBuffer(uint32_t currentFrame)
-{
-    uniformDataOffscreen.projection = glm::perspective(glm::radians(60.0f), static_cast<float>(swapChainExtent.width) / static_cast<float>(swapChainExtent.height), 0.1f, 256.0f);
-    // GLM was originally designed for OpenGL, where the Y coordinate of the clip coordinates is inverted. The easiest way to compensate for that is to flip the sign on the scaling factor of the Y axis in the projection matrix. 
-    uniformDataOffscreen.projection[1][1] *= -1;
-    uniformDataOffscreen.view = glm::lookAt(glm::vec3(2.15f, 0.3f, -8.75f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-    uniformDataOffscreen.model = glm::mat4(1.0f);
-    memcpy(uniformBuffers[currentFrame].offscreen.uniformBuffersMapped, &uniformDataOffscreen, sizeof(UniformDataOffscreen));
-}
-
 void VulkanApp::createDescriptorPool()
 {
     std::array poolSizes{
         vk::DescriptorPoolSize{
             .type = vk::DescriptorType::eUniformBuffer,
+            // Q: Why 8?
             .descriptorCount = MAX_FRAMES_IN_FLIGHT * 8
         },
         vk::DescriptorPoolSize{
             .type = vk::DescriptorType::eCombinedImageSampler,
+            // Q: Why 9?
             .descriptorCount = MAX_FRAMES_IN_FLIGHT * 9
         }
     };
     vk::DescriptorPoolCreateInfo poolInfo{
         .flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
-        .maxSets = MAX_FRAMES_IN_FLIGHT,
+        // Deferred composition: 1 + Offscreen (scene): 2 = 3
+        .maxSets = MAX_FRAMES_IN_FLIGHT * 3,
         .poolSizeCount = static_cast<uint32_t>(poolSizes.size()),
         .pPoolSizes = poolSizes.data()
     };
@@ -1178,17 +1192,28 @@ void VulkanApp::createDescriptorSets()
     };
 
     // Model
-    //vk::DescriptorImageInfo descriptorColorMap{
-    //    .sampler = textureSampler,
-    //    .imageView = offScreenFramebuffer.normal.view,
-    //    .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal
-    //};
-    //vk::DescriptorImageInfo descriptorNormalMap{
-    //    .sampler = textureSampler,
-    //    .imageView = offScreenFramebuffer.normal.view,
-    //    .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal
-    //};
+    vk::DescriptorImageInfo modelDescriptorColorMap{
+        .sampler = textureSampler,
+        .imageView = offScreenFramebuffer.normal.view,
+        .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal
+    };
+    vk::DescriptorImageInfo modelDescriptorNormalMap{
+        .sampler = textureSampler,
+        .imageView = offScreenFramebuffer.normal.view,
+        .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal
+    };
 
+    // Background
+    vk::DescriptorImageInfo bgDescriptorColorMap{
+        .sampler = textureSampler,
+        .imageView = offScreenFramebuffer.normal.view,
+        .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal
+    };
+    vk::DescriptorImageInfo bgDescriptorNormalMap{
+        .sampler = textureSampler,
+        .imageView = offScreenFramebuffer.normal.view,
+        .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal
+    };
 
     for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
     {
@@ -1213,21 +1238,35 @@ void VulkanApp::createDescriptorSets()
         device.updateDescriptorSets(writeDescriptorSets, {});
 
         // Offscreen (scene)
+        
         // Model
-        //vk::DescriptorBufferInfo offscreenModelBI{
-        //    .buffer = uniformBuffers[i].offscreen.uniformBuffer,
-        //    .offset = 0,
-        //    .range = sizeof(UniformDataOffscreen)
-        //};
-        //descriptorSets[i].model = std::move(device.allocateDescriptorSets(allocInfo)[0]);
-        //writeDescriptorSets = {
-        //    // Binding 0: Vertex shader uniform buffer
-        //    vk::WriteDescriptorSet{ .dstSet = descriptorSets[i].model, .dstBinding = 0, .descriptorType = vk::DescriptorType::eUniformBuffer, .pBufferInfo = &offscreenModelBI},
-        //    // Binding 1: Color map
-        //    vk::WriteDescriptorSet{.dstSet = descriptorSets[i].model, .dstBinding = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &descriptorColorMap},
-        //    // Binding 2: Normal map
-        //    vk::WriteDescriptorSet{.dstSet = descriptorSets[i].model, .dstBinding = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &descriptorNormalMap}
-        //};
+        vk::DescriptorBufferInfo offscreenModelBI{
+            .buffer = uniformBuffers[i].offscreen.uniformBuffer,
+            .offset = 0,
+            .range = sizeof(UniformDataOffscreen)
+        };
+        descriptorSets[i].model = std::move(device.allocateDescriptorSets(allocInfo)[0]);
+        writeDescriptorSets = {
+            // Binding 0: Vertex shader uniform buffer
+            vk::WriteDescriptorSet{ .dstSet = descriptorSets[i].model, .dstBinding = 0, .descriptorType = vk::DescriptorType::eUniformBuffer, .pBufferInfo = &offscreenModelBI},
+            // Binding 1: Color map
+            vk::WriteDescriptorSet{.dstSet = descriptorSets[i].model, .dstBinding = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &modelDescriptorColorMap},
+            // Binding 2: Normal map
+            vk::WriteDescriptorSet{.dstSet = descriptorSets[i].model, .dstBinding = 2, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &modelDescriptorColorMap}
+        };
+        device.updateDescriptorSets(writeDescriptorSets, {});
+
+        // Background
+        descriptorSets[i].floor = std::move(device.allocateDescriptorSets(allocInfo)[0]);
+        writeDescriptorSets = {
+            // Binding 0: Vertex shader uniform buffer
+            vk::WriteDescriptorSet{.dstSet = descriptorSets[i].floor, .dstBinding = 0, .descriptorType = vk::DescriptorType::eUniformBuffer, .pBufferInfo = &offscreenModelBI},
+            // Binding 1: Color map
+            vk::WriteDescriptorSet{.dstSet = descriptorSets[i].floor, .dstBinding = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &bgDescriptorColorMap},
+            // Binding 2: Normal map
+            vk::WriteDescriptorSet{.dstSet = descriptorSets[i].floor, .dstBinding = 2, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &bgDescriptorNormalMap}
+        };
+        device.updateDescriptorSets(writeDescriptorSets, {});
     }
 }
 
