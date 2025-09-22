@@ -7,6 +7,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <vector>
+#include <fbxsdk.h>
 
 /*
     fbx node
@@ -22,17 +23,27 @@ struct Texture
     vk::DescriptorImageInfo descriptor;
     vk::raii::Sampler sampler = nullptr;
     uint32_t index;
+    std::string format;
     void updateDescriptor();
     void loadImage(std::string_view path, vk::raii::Device* device, const vk::raii::Queue& queue);
 };
 
+enum class DescriptorBindingFlags { ImageBaseColor, ImageNormalMap };
 enum class AlphaMode { ALPHAMODE_OPAQUE, ALPHAMODE_MASK, ALPHAMODE_BLEND };
 
 struct Material
 {
     vk::raii::Device* device = nullptr;
     AlphaMode alphaMode = AlphaMode::ALPHAMODE_OPAQUE;
-    
+    float alphaCutoff = 1.0f;
+    float metallicFactor = 1.0f;
+    float roughnessFactor = 1.0f;
+    glm::vec4 baseColorFactor = glm::vec4(1.0f);
+    std::unordered_map<std::string, Texture*> textures;
+    vk::raii::DescriptorSet descriptorSet = nullptr;
+
+    Material(vk::raii::Device* device) : device(device) {};
+    void createDescriptorSet(vk::raii::DescriptorPool descriptorPool, vk::raii::DescriptorSetLayout descriptorSetLayout, DescriptorBindingFlags descriptorBindingFlags);
 };
 
 struct Skin
@@ -64,11 +75,12 @@ public:
     /*
         Processing images will involve using a queue.
     */
-    void loadFromFile(std::string filename, vk::raii::Device& device, uint32_t nodeIndex, const vk::raii::Queue& queue, uint32_t fileLoadingFlags, float scale);
-    void loadNode();
-    void loadSkins();
-    void loadImages();
-    void loadMaterials();
+    bool loadFromFile(std::string filename, vk::raii::Device& device, uint32_t nodeIndex, const vk::raii::Queue& queue, uint32_t fileLoadingFlags, float scale);
+    // void loadNode();
+    // void loadSkins();
+     void loadImages(FbxNode* node);
+     bool getTextureMetaFromFile(const std::string& path, Texture& outMeta);
+    // void loadMaterials();
     // void loadAnimations();
 public:
     Node* findNode(Node* parent, uint32_t index);
@@ -119,4 +131,25 @@ public:
 
     bool buffersBound = false;
     std::string path;
+
+    inline static std::unordered_map<std::string, std::string> FBXPropertyToNew = {
+        // Maya standard surface workflow which supports sd material->maya->fbx.
+        // Arnold standard surface has the same mapping so it should also work.
+        {"baseColor", "BaseColor"},
+        {"normalCamera", "Normal"},
+        {"transmissionColor", "Metallic"},
+        {"specularColor", "Roughness"},
+        {"emissionColor", "EmissiveColor"},
+        // UE import fbx workflow
+        {FbxSurfaceMaterial::sDiffuse, "BaseColor"},
+        {FbxSurfaceMaterial::sNormalMap, "Normal"},
+        {FbxSurfaceMaterial::sBump, "Normal"},
+        {FbxSurfaceMaterial::sSpecularFactor, "Roughness"},
+        {FbxSurfaceMaterial::sShininess, "Metallic"},
+        {FbxSurfaceMaterial::sEmissive, "EmissiveColor"},
+        {FbxSurfaceMaterial::sAmbient, "AmbientColor"},
+        {FbxSurfaceMaterial::sSpecular, "Specular"},
+        {FbxSurfaceMaterial::sTransparentColor, "Opacity"},
+        {FbxSurfaceMaterial::sTransparencyFactor, "OpacityMask"},
+    };
 };
