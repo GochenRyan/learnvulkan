@@ -9,6 +9,22 @@
 #include <vector>
 #include <fbxsdk.h>
 
+enum class DescriptorBindingFlags { ImageBaseColor, ImageNormalMap };
+enum class AlphaMode { ALPHAMODE_OPAQUE, ALPHAMODE_MASK, ALPHAMODE_BLEND };
+enum class FileLoadingFlags : uint32_t
+{
+    None = 0x00000000,
+    PreTransformVertices = 0x00000001,
+    PreMultiplyVertexColors = 0x00000002,
+    FlipY = 0x00000004,
+    DontLoadImages = 0x00000008
+};
+
+inline FileLoadingFlags operator|(FileLoadingFlags lhs, FileLoadingFlags rhs)
+{
+    return static_cast<FileLoadingFlags>(static_cast<uint32_t>(lhs) | static_cast<uint32_t>(rhs));
+}
+
 /*
     fbx node
 */
@@ -28,9 +44,6 @@ struct Texture
     void loadImage(std::string_view path, vk::raii::Device* device, const vk::raii::Queue& queue);
 };
 
-enum class DescriptorBindingFlags { ImageBaseColor, ImageNormalMap };
-enum class AlphaMode { ALPHAMODE_OPAQUE, ALPHAMODE_MASK, ALPHAMODE_BLEND };
-
 struct Material
 {
     vk::raii::Device* device = nullptr;
@@ -43,7 +56,7 @@ struct Material
     vk::raii::DescriptorSet descriptorSet = nullptr;
 
     Material(vk::raii::Device* device) : device(device) {};
-    void createDescriptorSet(vk::raii::DescriptorPool descriptorPool, vk::raii::DescriptorSetLayout descriptorSetLayout, DescriptorBindingFlags descriptorBindingFlags);
+    //void createDescriptorSet(vk::raii::DescriptorPool descriptorPool, vk::raii::DescriptorSetLayout descriptorSetLayout, DescriptorBindingFlags descriptorBindingFlags);
 };
 
 struct Skin
@@ -75,24 +88,24 @@ public:
     /*
         Processing images will involve using a queue.
     */
-    bool loadFromFile(std::string filename, vk::raii::Device& device, uint32_t nodeIndex, const vk::raii::Queue& queue, uint32_t fileLoadingFlags, float scale);
+    bool loadFromFile(std::string filename, vk::raii::Device& device, const vk::raii::Queue& queue, FileLoadingFlags fileLoadingFlags = FileLoadingFlags::None, float scale = 1.0f);
     // void loadNode();
     // void loadSkins();
      void loadImages(FbxNode* node);
-     bool getTextureMetaFromFile(const std::string& path, Texture& outMeta);
+     //bool getTextureMetaFromFile(const std::string& path, Texture& outMeta);
     // void loadMaterials();
     // void loadAnimations();
 public:
-    Node* findNode(Node* parent, uint32_t index);
-    Node* nodeFromIndex(uint32_t index);
+    //Node* findNode(Node* parent, uint32_t index);
+    //Node* nodeFromIndex(uint32_t index);
 public:
-    void bindBuffers(vk::raii::CommandBuffer& commandBuffer);
-    void prepareNodeDescriptor(Node* node, vk::raii::DescriptorSetLayout& descriptorSetLayout);
-    void drawNode(Node* node, vk::raii::CommandBuffer& commandBuffer, uint32_t renderFlags = 0, const vk::raii::PipelineLayout& pipelineLayout = nullptr, uint32_t bindImageSet = 1);
-    void draw(vk::raii::CommandBuffer& commandBuffer, uint32_t renderFlags = 0, const vk::raii::PipelineLayout& pipelineLayout = nullptr, uint32_t bindImageSet = 1);
+    //void bindBuffers(vk::raii::CommandBuffer& commandBuffer);
+    //void prepareNodeDescriptor(Node* node, vk::raii::DescriptorSetLayout& descriptorSetLayout);
+    //void drawNode(Node* node, vk::raii::CommandBuffer& commandBuffer, uint32_t renderFlags = 0, const vk::raii::PipelineLayout& pipelineLayout = nullptr, uint32_t bindImageSet = 1);
+    //void draw(vk::raii::CommandBuffer& commandBuffer, uint32_t renderFlags = 0, const vk::raii::PipelineLayout& pipelineLayout = nullptr, uint32_t bindImageSet = 1);
 
-    void getNodeDimensions(Node* node, glm::vec3& min, glm::vec3& max);
-    void getSceneDimensions();
+    //void getNodeDimensions(Node* node, glm::vec3& min, glm::vec3& max);
+    //void getSceneDimensions();
     // void updateAnimation(uint32_t index, float time);
 public:
     struct Vertices
@@ -139,7 +152,9 @@ public:
         {"normalCamera", "Normal"},
         {"transmissionColor", "Metallic"},
         {"specularColor", "Roughness"},
+        {"specularRoughness", "Roughness"},
         {"emissionColor", "EmissiveColor"},
+        {"metalness", "Metallic"},
         // UE import fbx workflow
         {FbxSurfaceMaterial::sDiffuse, "BaseColor"},
         {FbxSurfaceMaterial::sNormalMap, "Normal"},
@@ -150,6 +165,6 @@ public:
         {FbxSurfaceMaterial::sAmbient, "AmbientColor"},
         {FbxSurfaceMaterial::sSpecular, "Specular"},
         {FbxSurfaceMaterial::sTransparentColor, "Opacity"},
-        {FbxSurfaceMaterial::sTransparencyFactor, "OpacityMask"},
+        {FbxSurfaceMaterial::sTransparencyFactor, "OpacityMask"}
     };
 };

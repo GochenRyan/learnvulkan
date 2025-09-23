@@ -1,5 +1,6 @@
 #pragma once
 #include <DeferredRendering/VulkanBuffer.h>
+#include <DeferredRendering/Model.h>
 
 #include <iostream>
 #include <stdexcept>
@@ -361,6 +362,11 @@ private:
         VulkanBuffer composition;
     };
     std::array<UniformBuffers, MAX_FRAMES_IN_FLIGHT> uniformBuffers;
+
+    struct {
+        Model model;
+        Model Floor;
+    } models;
 public:
     /*
         Although many drivers and platforms trigger VK_ERROR_OUT_OF_DATE_KHR automatically after a window resize, it is not guaranteed to happen. 

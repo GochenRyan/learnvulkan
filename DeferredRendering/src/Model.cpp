@@ -2,6 +2,18 @@
 #include <format>
 #include <iostream>
 
+static std::string toLower(const std::string& s) {
+    std::string r = s;
+    std::transform(r.begin(), r.end(), r.begin(), [](unsigned char c) { return std::tolower(c); });
+    return r;
+}
+
+static std::string getExtension(const std::string& path) {
+    size_t p = path.find_last_of('.');
+    if (p == std::string::npos) return "";
+    return toLower(path.substr(p + 1));
+}
+
 void Texture::loadImage(std::string_view path, vk::raii::Device *device, const vk::raii::Queue &queue)
 {
 }
@@ -10,7 +22,7 @@ void Texture::updateDescriptor()
 {
 }
 
-bool Model::loadFromFile(std::string filename, vk::raii::Device &device, uint32_t nodeIndex, const vk::raii::Queue &queue, uint32_t fileLoadingFlags, float scale)
+bool Model::loadFromFile(std::string filename, vk::raii::Device &device, const vk::raii::Queue &queue, FileLoadingFlags fileLoadingFlags, float scale)
 {
     // Create manager & iosettings
     FbxManager* manager = FbxManager::Create();
@@ -59,6 +71,22 @@ bool Model::loadFromFile(std::string filename, vk::raii::Device &device, uint32_
         return false;
     }
 
+    const int nodeCount = root->GetChildCount();
+    std::vector<FbxNode*> nodes;
+    nodes.reserve(nodeCount);
+
+    std::function<void(FbxNode*)> collectNodes = [&](FbxNode* n) {
+        nodes.push_back(n);
+        for (int i = 0; i < n->GetChildCount(); ++i)
+            collectNodes(n->GetChild(i));
+        };
+    collectNodes(root);
+
+    for (FbxNode* node : nodes)
+    {
+        loadImages(node);
+    }
+
     return false;
 }
 
@@ -91,6 +119,9 @@ void Model::loadImages(FbxNode* node)
 
                 const char* pFBXPropertyName = currentProperty.GetNameAsCStr();
                 const auto& iterPropertyName = FBXPropertyToNew.find(pFBXPropertyName);
+
+                std::string path = pFileTex->GetFileName();
+
             }
 
             currentProperty = mat->GetNextProperty(currentProperty);
