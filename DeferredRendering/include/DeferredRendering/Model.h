@@ -88,10 +88,10 @@ public:
     /*
         Processing images will involve using a queue.
     */
-    bool loadFromFile(std::string filename, vk::raii::Device& device, const vk::raii::Queue& queue, FileLoadingFlags fileLoadingFlags = FileLoadingFlags::None, float scale = 1.0f);
+    bool loadFromFile(std::string filename, vk::raii::Device& device, const vk::raii::Queue& transferQueue, FileLoadingFlags fileLoadingFlags = FileLoadingFlags::None, float scale = 1.0f);
     // void loadNode();
     // void loadSkins();
-     void loadImages(FbxNode* node);
+     void loadImages(FbxNode* node, const vk::raii::Queue& transferQueue);
      //bool getTextureMetaFromFile(const std::string& path, Texture& outMeta);
     // void loadMaterials();
     // void loadAnimations();
