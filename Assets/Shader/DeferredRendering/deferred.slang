@@ -57,8 +57,8 @@ float4 fragMain(VSOutput input)
     {
         switch (ubo.displayDebugTarget)
         {
-            case 1:
-                fragColor.rgb = fragColor;
+        case 1:
+                fragColor.rgb = fragPos;
                 break;
             case 2:
                 fragColor.rgb = normal;

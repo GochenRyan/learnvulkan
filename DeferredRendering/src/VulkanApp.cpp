@@ -1,15 +1,13 @@
 #include <DeferredRendering/VulkanApp.h>
+
 #include <chrono>
+#include <fbxsdk.h>
 #include <format>
 #include <fstream>
 #include <glm/gtc/matrix_transform.hpp>
 #include <iostream>
-#include <stdexcept>
-
-#define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
-
-#include <fbxsdk.h>
+#include <stdexcept>
 
 static VKAPI_ATTR vk::Bool32 VKAPI_CALL debugCallback(vk::DebugUtilsMessageSeverityFlagBitsEXT severity, vk::DebugUtilsMessageTypeFlagsEXT type, const vk::DebugUtilsMessengerCallbackDataEXT* pCallbackData, void*) {
     if (severity == vk::DebugUtilsMessageSeverityFlagBitsEXT::eError || severity == vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning) {
@@ -84,8 +82,8 @@ vk::Extent2D VulkanApp::chooseSwapExtent(const vk::SurfaceCapabilitiesKHR& capab
 
 void VulkanApp::createSwapChain()
 {
-    auto surfaceCapabilities = physicalDevice.getSurfaceCapabilitiesKHR(surface);
-    swapChainImageFormat = chooseSwapSurfaceFormat(physicalDevice.getSurfaceFormatsKHR(surface));
+    auto surfaceCapabilities = deviceVK->physicalDevice.getSurfaceCapabilitiesKHR(surface);
+    swapChainImageFormat = chooseSwapSurfaceFormat(deviceVK->physicalDevice.getSurfaceFormatsKHR(surface));
     swapChainExtent = chooseSwapExtent(surfaceCapabilities);
     auto minImageCount = std::max(3u, surfaceCapabilities.minImageCount);
     minImageCount = (surfaceCapabilities.maxImageCount > 0 && minImageCount > surfaceCapabilities.maxImageCount) ? surfaceCapabilities.maxImageCount : minImageCount;
@@ -106,11 +104,11 @@ void VulkanApp::createSwapChain()
         .imageSharingMode = vk::SharingMode::eExclusive,
         .preTransform = surfaceCapabilities.currentTransform,
         .compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque,
-        .presentMode = chooseSwapPresentMode(physicalDevice.getSurfacePresentModesKHR(surface)),
+        .presentMode = chooseSwapPresentMode(deviceVK->physicalDevice.getSurfacePresentModesKHR(surface)),
         .clipped = true
     };
 
-    swapChain = vk::raii::SwapchainKHR(device, SwapchainCreateInfo);
+    swapChain = vk::raii::SwapchainKHR(deviceVK->logicDevice, SwapchainCreateInfo);
     swapChainImages = swapChain.getImages();
 }
 
@@ -121,7 +119,7 @@ void VulkanApp::createImageViews()
     for (auto image : swapChainImages)
     {
         imageViewCreateInfo.image = image;
-        swapChainImageViews.emplace_back(device, imageViewCreateInfo);
+        swapChainImageViews.emplace_back(deviceVK->logicDevice, imageViewCreateInfo);
     }
 }
 
@@ -178,7 +176,7 @@ void VulkanApp::mainLoop()
         drawFrame();
     }
 
-    device.waitIdle();
+    deviceVK->logicDevice.waitIdle();
 }
 
 void VulkanApp::cleanup()
@@ -337,7 +335,7 @@ void VulkanApp::pickPhysicalDevice()
         });
     if (devIter != devices.end())
     {
-        physicalDevice = *devIter;
+        deviceVK = new VulkanDevice(std::move(*devIter));
     }
     else
     {
@@ -347,7 +345,7 @@ void VulkanApp::pickPhysicalDevice()
 
 void VulkanApp::createLogicalDevice()
 {
-    std::vector<vk::QueueFamilyProperties> queueFamilyProperties = physicalDevice.getQueueFamilyProperties();
+    std::vector<vk::QueueFamilyProperties> queueFamilyProperties = deviceVK->physicalDevice.getQueueFamilyProperties();
 
     // get the first index into queueFamilyProperties which supports both graphics and present
     for (uint32_t qfpIndex = 0; qfpIndex < queueFamilyProperties.size(); qfpIndex++)
@@ -356,7 +354,7 @@ void VulkanApp::createLogicalDevice()
             Any queue family with VK_QUEUE_GRAPHICS_BIT or VK_QUEUE_COMPUTE_BIT capabilities already implicitly support VK_QUEUE_TRANSFER_BIT operations.
         */
         if ((queueFamilyProperties[qfpIndex].queueFlags & vk::QueueFlagBits::eGraphics) &&
-            physicalDevice.getSurfaceSupportKHR(qfpIndex, *surface))
+            deviceVK->physicalDevice.getSurfaceSupportKHR(qfpIndex, *surface))
         {
             // found a queue family that supports both graphics and present
             queueIndex = qfpIndex;
@@ -384,8 +382,8 @@ void VulkanApp::createLogicalDevice()
                                                 .enabledExtensionCount = static_cast<uint32_t>(requiredDeviceExtension.size()),
                                                 .ppEnabledExtensionNames = requiredDeviceExtension.data() };
 
-    device = vk::raii::Device(physicalDevice, deviceCreateInfo);
-    queue = vk::raii::Queue(device, queueIndex, 0);
+    deviceVK->logicDevice = deviceVK->physicalDevice.createDevice(deviceCreateInfo);
+    queue = deviceVK->logicDevice.getQueue(queueIndex, 0);
 }
 
 void VulkanApp::createSurface()
@@ -514,7 +512,7 @@ void VulkanApp::createGraphicPipeline()
         .pSetLayouts = &*descriptorSetLayout,
         .pushConstantRangeCount = 0 
     };
-    pipelineLayout = vk::raii::PipelineLayout(device, pipelineLayoutInfo);
+    pipelineLayout = vk::raii::PipelineLayout(deviceVK->logicDevice, pipelineLayoutInfo);
 
     vk::PipelineVertexInputStateCreateInfo emptyInputState{};
 
@@ -544,7 +542,7 @@ void VulkanApp::createGraphicPipeline()
     // The vertex coordinates of the fullscreen triangle are generated in a clockwise sequence
     rasterizerCI.cullMode = vk::CullModeFlagBits::eFront;
     // Final fullscreen composition pass pipeline
-    pipelines.composition = device.createGraphicsPipeline(nullptr, pipelineCI);
+    pipelines.composition = deviceVK->logicDevice.createGraphicsPipeline(nullptr, pipelineCI);
 
     auto bindingDescription = Vertex::getBindingDescription();
     auto attributeDescriptions = Vertex::getAttributeDescriptions();
@@ -585,7 +583,7 @@ void VulkanApp::createGraphicPipeline()
     colorBlendingInfo.attachmentCount = static_cast<uint32_t>(blendAttachmentStates.size());
     colorBlendingInfo.pAttachments = blendAttachmentStates.data();
 
-    pipelines.offscreen = device.createGraphicsPipeline(nullptr, pipelineCI);
+    pipelines.offscreen = deviceVK->logicDevice.createGraphicsPipeline(nullptr, pipelineCI);
 }
 
 std::vector<char> VulkanApp::readFile(std::string_view filePath)
@@ -617,7 +615,7 @@ vk::raii::ShaderModule VulkanApp::createShaderModule(const std::vector<char>& co
         .pCode = reinterpret_cast<const uint32_t*>(code.data())
     };
 
-    vk::raii::ShaderModule shaderModule{ device, createInfo };
+    vk::raii::ShaderModule shaderModule{ deviceVK->logicDevice, createInfo };
 
     return shaderModule;
 }
@@ -635,19 +633,19 @@ void VulkanApp::createCommandPool()
         .flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
         .queueFamilyIndex = queueIndex
     };
-    commandPool = vk::raii::CommandPool(device, poolInfo);
+    deviceVK->commandPool = vk::raii::CommandPool(deviceVK->logicDevice, poolInfo);
 }
 
 void VulkanApp::createCommandBuffers()
 {
     commandBuffers.clear();
     vk::CommandBufferAllocateInfo allocInfo{
-        .commandPool = commandPool,
+        .commandPool = deviceVK->commandPool,
         .level = vk::CommandBufferLevel::ePrimary,
         .commandBufferCount = MAX_FRAMES_IN_FLIGHT
     };
 
-    commandBuffers = vk::raii::CommandBuffers(device, allocInfo);
+    commandBuffers = vk::raii::CommandBuffers(deviceVK->logicDevice, allocInfo);
 }
 
 void VulkanApp::recordCommandBuffer(uint32_t imageIndex)
@@ -729,10 +727,10 @@ void VulkanApp::transition_image_layout(uint32_t imageIndex, vk::ImageLayout old
 void VulkanApp::drawFrame()
 {
     /*
-        Since MAX_FRAMES_IN_FLIGHT is greater than 1, when the CPU is preparing for the next frame, the GPU is processing the previous frame, while device.waitForFences checks the fence of the current frame. 
+        Since MAX_FRAMES_IN_FLIGHT is greater than 1, when the CPU is preparing for the next frame, the GPU is processing the previous frame, while deviceVK->logicDevice.waitForFences checks the fence of the current frame. 
         The fence of this frame is usually not triggered yet (because the GPU has not started processing the current frame), so the CPU will not block
     */
-    while (vk::Result::eTimeout == device.waitForFences(*inFlightFences[currentFrame], vk::True, UINT16_MAX));
+    while (vk::Result::eTimeout == deviceVK->logicDevice.waitForFences(*inFlightFences[currentFrame], vk::True, UINT16_MAX));
 
     auto [result, imageIndex] = swapChain.acquireNextImage(UINT64_MAX, *presentCompleteSemaphores[semaphoreIndex], nullptr);
 
@@ -754,7 +752,7 @@ void VulkanApp::drawFrame()
 
     updateUniformBuffer(currentFrame);
 
-    device.resetFences(*inFlightFences[currentFrame]);
+    deviceVK->logicDevice.resetFences(*inFlightFences[currentFrame]);
     commandBuffers[currentFrame].reset();
     recordCommandBuffer(imageIndex);
 
@@ -854,13 +852,13 @@ void VulkanApp::createSyncObjects()
 
     for (size_t i = 0; i < swapChainImages.size(); ++i)
     {
-        presentCompleteSemaphores.emplace_back(device, vk::SemaphoreCreateInfo());  // Ensure that the image is obtained from the Swap Chain before the rendering queue can use the image
-        renderFinishedSemaphores.emplace_back(device, vk::SemaphoreCreateInfo());  // Notify that the rendering of the presentation queue has been completed and images can be submitted to the screen
+        presentCompleteSemaphores.emplace_back(deviceVK->logicDevice, vk::SemaphoreCreateInfo());  // Ensure that the image is obtained from the Swap Chain before the rendering queue can use the image
+        renderFinishedSemaphores.emplace_back(deviceVK->logicDevice, vk::SemaphoreCreateInfo());  // Notify that the rendering of the presentation queue has been completed and images can be submitted to the screen
     }
 
     for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
     {
-        inFlightFences.emplace_back(device, vk::FenceCreateInfo { .flags = vk::FenceCreateFlagBits::eSignaled });
+        inFlightFences.emplace_back(deviceVK->logicDevice, vk::FenceCreateInfo { .flags = vk::FenceCreateFlagBits::eSignaled });
     }
 }
 
@@ -873,7 +871,7 @@ void VulkanApp::recreateSwapChain()
         glfwWaitEvents();
     }
 
-    device.waitIdle();
+    deviceVK->logicDevice.waitIdle();
 
     cleanupSwapChain();
     createSwapChain();
@@ -928,7 +926,7 @@ void VulkanApp::createVertexBuffer()
     vk::DeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
     vk::raii::Buffer stagingBuffer = nullptr;
     vk::raii::DeviceMemory stagingBufferMemory = nullptr;
-    createBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, stagingBuffer, stagingBufferMemory);
+    deviceVK->CreateBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, stagingBuffer, stagingBufferMemory);
     void* dataStaging = stagingBufferMemory.mapMemory(0, bufferSize);
     memcpy(dataStaging, vertices.data(), bufferSize);
     stagingBufferMemory.unmapMemory();
@@ -939,79 +937,15 @@ void VulkanApp::createVertexBuffer()
         If the data is directly written to the buffer in the system memory through the CPU, the GPU may need to wait for the CPU to complete the writing before it can start processing the data. 
         By using the staging buffer and the GPU's transmission queue, asynchronous transmission can be achieved to avoid blocking the GPU.
     */
-    createBuffer(bufferSize, vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eTransferDst, vk::MemoryPropertyFlagBits::eDeviceLocal, vertexBuffer, vertexBufferMemory);
+    deviceVK->CreateBuffer(bufferSize, vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eTransferDst, vk::MemoryPropertyFlagBits::eDeviceLocal, vertexBuffer, vertexBufferMemory);
     copyBuffer(stagingBuffer, vertexBuffer, bufferSize);
-}
-
-/*
-    Graphics cards can offer different types of memory to allocate from. 
-    Each type of memory varies in terms of allowed operations and performance characteristics. 
-    We need to combine the requirements of the buffer and our own application requirements to find the right type of memory to use.
-*/
-uint32_t VulkanApp::findMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties)
-{
-    /*
-        The VkPhysicalDeviceMemoryProperties structure has two arrays memoryTypes and memoryHeaps. 
-        Memory heaps are distinct memory resources like **dedicated VRAM** and **swap space in RAM** for when VRAM runs out. 
-        The different types of memory exist within these heaps.
-    */
-    vk::PhysicalDeviceMemoryProperties memProperties = physicalDevice.getMemoryProperties();
-
-    for (uint32_t i = 0; i < memProperties.memoryTypeCount; ++i)
-    {
-        if (typeFilter & (1 << i) && (memProperties.memoryTypes[i].propertyFlags & properties) == properties)
-        {
-            return i;
-        }
-    }
-
-    throw std::runtime_error("failed to find suitable memory type!");
-}
-
-void VulkanApp::createBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage, vk::MemoryPropertyFlags properties, vk::raii::Buffer& buffer, vk::raii::DeviceMemory& bufferMemory)
-{
-    vk::BufferCreateInfo bufferInfo{
-        // used to configure sparse buffer memory,
-        .flags = {},
-        // specifies the size of the buffer in bytes.
-        .size = size,
-        // indicates for which purposes the data in the buffer is going to be used. It is possible to specify multiple purposes using a bitwise or.
-        .usage = usage,
-        .sharingMode = vk::SharingMode::eExclusive
-    };
-    buffer = vk::raii::Buffer(device, bufferInfo);
-
-    /*
-        The VkMemoryRequirements struct has three fields:
-            size: The size of the required memory in bytes may differ from bufferInfo.size.
-            alignment: The offset in bytes where the buffer begins in the allocated region of memory, depends on bufferInfo.usage and bufferInfo.flags.
-            memoryTypeBits: Bit field of the memory types that are suitable for the buffer.
-    */
-    vk::MemoryRequirements memRequirements = buffer.getMemoryRequirements();
-
-    vk::MemoryAllocateInfo memoryAllocateInfo{
-        .allocationSize = memRequirements.size,
-        .memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties)
-    };
-
-    /*
-        It should be noted that in a real world application, you're not supposed to actually call vkAllocateMemory for every individual buffer. 
-        The maximum number of simultaneous memory allocations is limited by the maxMemoryAllocationCount physical device limit, which may be as low as 4096 even on high end hardware like an NVIDIA GTX 1080. 
-        The right way to allocate memory for a large number of objects at the same time is to create a custom allocator that splits up a single allocation among many different objects 
-        by using the offset parameters that we've seen in many functions.
-
-        You can either implement such an allocator yourself, or use the VulkanMemoryAllocator library provided by the GPUOpen initiative. 
-        However, for this tutorial, it's okay to use a separate allocation for every resource, because we won't come close to hitting any of these limits for now.
-    */
-    bufferMemory = vk::raii::DeviceMemory(device, memoryAllocateInfo);
-    buffer.bindMemory(*bufferMemory, /* the offset within the region of memory. If the offset is non-zero, then it is required to be divisible by memRequirements.alignment. */0);
 }
 
 void VulkanApp::copyBuffer(vk::raii::Buffer& srcBuffer, vk::raii::Buffer& dstBuffer, vk::DeviceSize size)
 {
     auto commandCopyBuffer = beginSingleTimeCommands();
     commandCopyBuffer->copyBuffer(srcBuffer, dstBuffer, vk::BufferCopy(0, 0, size));
-    endSingleTimeCommands(*commandCopyBuffer);
+    deviceVK->endSingleTimeCommands(*commandCopyBuffer, queue);
 }
 
 void VulkanApp::createIndexBuffer()
@@ -1019,12 +953,12 @@ void VulkanApp::createIndexBuffer()
     vk::DeviceSize bufferSize = sizeof(indices[0]) * indices.size();
     vk::raii::Buffer stagingBuffer = nullptr;
     vk::raii::DeviceMemory stagingBufferMemory = nullptr;
-    createBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, stagingBuffer, stagingBufferMemory);
+    deviceVK->CreateBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, stagingBuffer, stagingBufferMemory);
     void* dataStaging = stagingBufferMemory.mapMemory(0, bufferSize);
     memcpy(dataStaging, indices.data(), bufferSize);
     stagingBufferMemory.unmapMemory();
 
-    createBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eIndexBuffer, vk::MemoryPropertyFlagBits::eDeviceLocal, indexBuffer, indexBufferMemory);
+    deviceVK->CreateBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eIndexBuffer, vk::MemoryPropertyFlagBits::eDeviceLocal, indexBuffer, indexBufferMemory);
     copyBuffer(stagingBuffer, indexBuffer, bufferSize);
 }
 
@@ -1033,10 +967,10 @@ void VulkanApp::createUniformBuffers()
     for (auto& buffer : uniformBuffers)
     {
         // Offscreen
-        createBuffer(sizeof(UniformDataOffscreen), vk::BufferUsageFlagBits::eUniformBuffer, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, buffer.offscreen.uniformBuffer, buffer.offscreen.uniformBufferMemory);
+        deviceVK->CreateBuffer(sizeof(UniformDataOffscreen), vk::BufferUsageFlagBits::eUniformBuffer, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, buffer.offscreen.uniformBuffer, buffer.offscreen.uniformBufferMemory);
         buffer.offscreen.uniformBuffersMapped = buffer.offscreen.uniformBufferMemory.mapMemory(0, sizeof(UniformDataOffscreen));
         // Composition
-        createBuffer(sizeof(UniformDataComposition), vk::BufferUsageFlagBits::eUniformBuffer, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, buffer.composition.uniformBuffer, buffer.composition.uniformBufferMemory);
+        deviceVK->CreateBuffer(sizeof(UniformDataComposition), vk::BufferUsageFlagBits::eUniformBuffer, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, buffer.composition.uniformBuffer, buffer.composition.uniformBufferMemory);
         buffer.composition.uniformBuffersMapped = buffer.composition.uniformBufferMemory.mapMemory(0, sizeof(UniformDataComposition));
     }
 
@@ -1137,7 +1071,7 @@ void VulkanApp::createDescriptorSetLayout()
         .bindingCount = static_cast<uint32_t>(bindings.size()),
         .pBindings = bindings.data()
     };
-    descriptorSetLayout = vk::raii::DescriptorSetLayout(device, layoutInfo);
+    descriptorSetLayout = vk::raii::DescriptorSetLayout(deviceVK->logicDevice, layoutInfo);
 }
 
 void VulkanApp::createDescriptorPool()
@@ -1161,7 +1095,7 @@ void VulkanApp::createDescriptorPool()
         .poolSizeCount = static_cast<uint32_t>(poolSizes.size()),
         .pPoolSizes = poolSizes.data()
     };
-    descriptorPool = vk::raii::DescriptorPool(device, poolInfo);
+    descriptorPool = vk::raii::DescriptorPool(deviceVK->logicDevice, poolInfo);
 }
 
 void VulkanApp::createDescriptorSets()
@@ -1224,7 +1158,7 @@ void VulkanApp::createDescriptorSets()
         };
         std::vector<vk::WriteDescriptorSet> writeDescriptorSets;
         // Deferred composition
-        descriptorSets[i].composition = std::move(device.allocateDescriptorSets(allocInfo)[0]);
+        descriptorSets[i].composition = std::move(deviceVK->logicDevice.allocateDescriptorSets(allocInfo)[0]);
         writeDescriptorSets = {
             // Binding 1 : Position texture target
             vk::WriteDescriptorSet{ .dstSet = descriptorSets[i].composition, .dstBinding = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &descriptorPosition},
@@ -1235,7 +1169,7 @@ void VulkanApp::createDescriptorSets()
             // Binding 4 : Fragment shader uniform buffer
             vk::WriteDescriptorSet{ .dstSet = descriptorSets[i].composition, .dstBinding = 4, .descriptorType = vk::DescriptorType::eUniformBuffer, .pBufferInfo = &compositionBI}
         };
-        device.updateDescriptorSets(writeDescriptorSets, {});
+        deviceVK->logicDevice.updateDescriptorSets(writeDescriptorSets, {});
 
         // Offscreen (scene)
         
@@ -1245,7 +1179,7 @@ void VulkanApp::createDescriptorSets()
             .offset = 0,
             .range = sizeof(UniformDataOffscreen)
         };
-        descriptorSets[i].model = std::move(device.allocateDescriptorSets(allocInfo)[0]);
+        descriptorSets[i].model = std::move(deviceVK->logicDevice.allocateDescriptorSets(allocInfo)[0]);
         writeDescriptorSets = {
             // Binding 0: Vertex shader uniform buffer
             vk::WriteDescriptorSet{ .dstSet = descriptorSets[i].model, .dstBinding = 0, .descriptorType = vk::DescriptorType::eUniformBuffer, .pBufferInfo = &offscreenModelBI},
@@ -1254,10 +1188,10 @@ void VulkanApp::createDescriptorSets()
             // Binding 2: Normal map
             vk::WriteDescriptorSet{.dstSet = descriptorSets[i].model, .dstBinding = 2, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &modelDescriptorColorMap}
         };
-        device.updateDescriptorSets(writeDescriptorSets, {});
+        deviceVK->logicDevice.updateDescriptorSets(writeDescriptorSets, {});
 
         // Background
-        descriptorSets[i].floor = std::move(device.allocateDescriptorSets(allocInfo)[0]);
+        descriptorSets[i].floor = std::move(deviceVK->logicDevice.allocateDescriptorSets(allocInfo)[0]);
         writeDescriptorSets = {
             // Binding 0: Vertex shader uniform buffer
             vk::WriteDescriptorSet{.dstSet = descriptorSets[i].floor, .dstBinding = 0, .descriptorType = vk::DescriptorType::eUniformBuffer, .pBufferInfo = &offscreenModelBI},
@@ -1266,7 +1200,7 @@ void VulkanApp::createDescriptorSets()
             // Binding 2: Normal map
             vk::WriteDescriptorSet{.dstSet = descriptorSets[i].floor, .dstBinding = 2, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &bgDescriptorNormalMap}
         };
-        device.updateDescriptorSets(writeDescriptorSets, {});
+        deviceVK->logicDevice.updateDescriptorSets(writeDescriptorSets, {});
     }
 }
 
@@ -1286,174 +1220,18 @@ void VulkanApp::createTextureImage()
     
     vk::raii::Buffer stagingBuffer = nullptr;
     vk::raii::DeviceMemory stagingBufferMemory = nullptr;
-    createBuffer(imageSize, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, stagingBuffer, stagingBufferMemory);
+    deviceVK->CreateBuffer(imageSize, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, stagingBuffer, stagingBufferMemory);
     void* dataStaging = stagingBufferMemory.mapMemory(0, imageSize);
     memcpy(dataStaging, pixels, imageSize);
     stagingBufferMemory.unmapMemory();
 
     stbi_image_free(pixels);
 
-    createImage(texWidth, texHeight, vk::Format::eR8G8B8A8Srgb, vk::ImageTiling::eOptimal, vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled, vk::MemoryPropertyFlagBits::eDeviceLocal, textureImage, textureImageMemory);
+    deviceVK->CreateImage(texWidth, texHeight, vk::Format::eR8G8B8A8Srgb, 1, vk::ImageTiling::eOptimal, vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled, vk::MemoryPropertyFlagBits::eDeviceLocal, textureImage, textureImageMemory);
 
-    transitionImageLayout(textureImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal);
-    copyBufferToImage(stagingBuffer, textureImage, static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight));
-    transitionImageLayout(textureImage, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
-}
-
-void VulkanApp::createImage(uint32_t width, uint32_t height, vk::Format format, vk::ImageTiling tiling, vk::ImageUsageFlags usage, vk::MemoryPropertyFlags properties, vk::raii::Image& image, vk::raii::DeviceMemory& imageMemory)
-{
-    vk::ImageCreateInfo imageInfo{
-        /*
-            tells Vulkan with what kind of coordinate system the texels in the image are going to be addressed. It is possible to create 1D, 2D and 3D images. 
-            One dimensional images can be used to store an array of data or gradient, 
-            two dimensional images are mainly used for textures, 
-            and three dimensional images can be used to store voxel volumes
-        */
-        .imageType = vk::ImageType::e2D,
-        .format = format,
-        .extent = {width, height, 
-        //  The extent field specifies the dimensions of the image, basically how many texels there are on each axis. That’s why depth must be 1 instead of 0
-        1},
-        .mipLevels = 1,
-        .arrayLayers = 1,
-        // The samples flag is related to multisampling. This is only relevant for images that will be used as attachments, so stick to one sample. 
-        .samples = vk::SampleCountFlagBits::e1,
-        /*
-            VK_IMAGE_TILING_LINEAR: Texels are laid out in row-major order like our pixels array
-            VK_IMAGE_TILING_OPTIMAL: Texels are laid out in an implementation defined order for optimal access
-        */
-        .tiling = tiling,
-        .usage = usage,
-        .sharingMode = vk::SharingMode::eExclusive,
-        // The image will only be used by one queue family: the one that supports graphics (and therefore also) transfer operations.
-        .queueFamilyIndexCount = 0,
-        .pQueueFamilyIndices = {},
-        .initialLayout = vk::ImageLayout::eUndefined
-    };
-
-    image = vk::raii::Image(device, imageInfo);
-    vk::MemoryRequirements memRequirements = image.getMemoryRequirements();
-    vk::MemoryAllocateInfo allocInfo{
-        .allocationSize = memRequirements.size,
-        .memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties)
-    };
-    imageMemory = vk::raii::DeviceMemory(device, allocInfo);
-    image.bindMemory(imageMemory, 0);
-}
-
-std::unique_ptr<vk::raii::CommandBuffer> VulkanApp::beginSingleTimeCommands()
-{
-    vk::CommandBufferAllocateInfo allocInfo{
-            .commandPool = commandPool,
-            .level = vk::CommandBufferLevel::ePrimary,
-            .commandBufferCount = 1
-    };
-    std::unique_ptr<vk::raii::CommandBuffer> commandBuffer = std::make_unique<vk::raii::CommandBuffer>(std::move(vk::raii::CommandBuffers(device, allocInfo).front()));
-
-    vk::CommandBufferBeginInfo beginInfo{
-        .flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit
-    };
-    commandBuffer->begin(beginInfo);
-
-    return commandBuffer;
-}
-
-void VulkanApp::endSingleTimeCommands(vk::raii::CommandBuffer& commandBuffer)
-{
-    commandBuffer.end();
-    queue.submit(vk::SubmitInfo{
-        .commandBufferCount = 1,
-        .pCommandBuffers = &*commandBuffer
-        }, nullptr);
-    queue.waitIdle();
-}
-
-void VulkanApp::transitionImageLayout(const vk::raii::Image& image, vk::ImageLayout oldLayout, vk::ImageLayout newLayout)
-{
-    auto commandBuffer = beginSingleTimeCommands();
-    vk::ImageMemoryBarrier barrier{
-        .oldLayout = oldLayout,
-        .newLayout = newLayout,
-        .image = image,
-        .subresourceRange = {
-            .aspectMask = vk::ImageAspectFlagBits::eColor,
-            .baseMipLevel = 0,
-            .levelCount = 1,
-            .baseArrayLayer = 0,
-            .layerCount = 1
-        }
-    };
-    vk::PipelineStageFlags sourceStage;
-    vk::PipelineStageFlags destinationStage;
-    if (oldLayout == vk::ImageLayout::eUndefined && 
-        /*
-            There is actually a special type of image layout that supports all operations, VK_IMAGE_LAYOUT_GENERAL. 
-            The problem with it, of course, is that it doesn’t necessarily offer the best performance for any operation. 
-            It is required for some special cases, like using an image as both input and output, or for reading an image after it has left the preinitialized layout.
-        */
-        newLayout == vk::ImageLayout::eTransferDstOptimal)
-    {
-        barrier.srcAccessMask = {};
-        barrier.dstAccessMask = vk::AccessFlagBits::eTransferWrite;
-
-        sourceStage = vk::PipelineStageFlagBits::eTopOfPipe;
-        destinationStage = vk::PipelineStageFlagBits::eTransfer;
-    }
-    else if (oldLayout == vk::ImageLayout::eTransferDstOptimal && newLayout == vk::ImageLayout::eShaderReadOnlyOptimal)
-    {
-        barrier.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
-        barrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
-
-        sourceStage = vk::PipelineStageFlagBits::eTransfer;
-        destinationStage = vk::PipelineStageFlagBits::eFragmentShader;
-    }
-    else
-    {
-        throw std::invalid_argument("unsupported layout transition!");
-    }
-    commandBuffer->pipelineBarrier(
-        /*
-            https://www.khronos.org/registry/vulkan/specs/1.3-extensions/html/chap7.html#synchronization-access-types-supported
-        */
-        // The first parameter after the command buffer specifies in which pipeline stage the operations occur that should happen before the barrier.
-        sourceStage, 
-        // The second parameter specifies the pipeline stage in which operations will wait on the barrier. 
-        destinationStage, {}, {}, nullptr, barrier);
-    endSingleTimeCommands(*commandBuffer);
-}
-
-void VulkanApp::copyBufferToImage(const vk::raii::Buffer& buffer, vk::raii::Image& image, uint32_t width, uint32_t height)
-{
-    auto commandBuffer = beginSingleTimeCommands();
-    vk::BufferImageCopy region{
-        .bufferOffset = 0,
-
-        /*
-            The bufferRowLength and bufferImageHeight fields specify how the pixels are laid out in memory. 
-            For example, you could have some padding bytes between rows of the image.
-        */
-        .bufferRowLength = 0,
-        .bufferImageHeight = 0,
-
-        .imageSubresource = {
-            .aspectMask = vk::ImageAspectFlagBits::eColor,
-            .mipLevel = 0,
-            .baseArrayLayer = 0,
-            .layerCount = 1
-        },
-        .imageOffset = {
-            .x = 0,
-            .y = 0,
-            .z = 0
-        },
-        .imageExtent = {
-            .width = width,
-            .height = height,
-            .depth = 1
-        }
-    };
-    commandBuffer->copyBufferToImage(buffer, image, vk::ImageLayout::eTransferDstOptimal, {region});
-    endSingleTimeCommands(*commandBuffer);
+    deviceVK->transitionImageLayout(textureImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal, queue);
+    deviceVK->copyBufferToImage(stagingBuffer, textureImage, static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight), queue);
+    deviceVK->transitionImageLayout(textureImage, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, queue);
 }
 
 void VulkanApp::createTextureImageView()
@@ -1490,12 +1268,12 @@ vk::raii::ImageView VulkanApp::createImageView(vk::raii::Image& image, vk::Forma
         }
     };
 
-    return vk::raii::ImageView(device, viewInfo);
+    return vk::raii::ImageView(deviceVK->logicDevice, viewInfo);
 }
 
 void VulkanApp::createTextureSampler()
 {
-    vk::PhysicalDeviceProperties properties = physicalDevice.getProperties();
+    vk::PhysicalDeviceProperties properties = deviceVK->physicalDevice.getProperties();
     vk::SamplerCreateInfo samplerInfo{
         // Magnification concerns the oversampling problem describes above, and minification concerns undersampling. 
         .magFilter = vk::Filter::eLinear,
@@ -1536,21 +1314,21 @@ void VulkanApp::createTextureSampler()
         */
         .unnormalizedCoordinates = vk::False
     };
-    textureSampler = vk::raii::Sampler(device, samplerInfo);
+    textureSampler = vk::raii::Sampler(deviceVK->logicDevice, samplerInfo);
 }
 
 void VulkanApp::createDepthResources()
 {
     vk::Format depthFormat = findDepthFormat();
 
-    createImage(swapChainExtent.width, swapChainExtent.height, depthFormat, vk::ImageTiling::eOptimal, vk::ImageUsageFlagBits::eDepthStencilAttachment, vk::MemoryPropertyFlagBits::eDeviceLocal, depthImage, depthImageMemory);
+    deviceVK->CreateImage(swapChainExtent.width, swapChainExtent.height, depthFormat, 1, vk::ImageTiling::eOptimal, vk::ImageUsageFlagBits::eDepthStencilAttachment, vk::MemoryPropertyFlagBits::eDeviceLocal, depthImage, depthImageMemory);
     depthImageView = createImageView(depthImage, depthFormat, vk::ImageAspectFlagBits::eDepth);
 }
 
 vk::Format VulkanApp::findSupportedFormat(const std::vector<vk::Format>& candidates, vk::ImageTiling tiling, vk::FormatFeatureFlags features)
 {
     for (const auto format : candidates) {
-        vk::FormatProperties props = physicalDevice.getFormatProperties(format);
+        vk::FormatProperties props = deviceVK->physicalDevice.getFormatProperties(format);
 
         if (tiling == vk::ImageTiling::eLinear && (props.linearTilingFeatures & features) == features) {
             return format;
@@ -1581,7 +1359,7 @@ bool VulkanApp::loadModel()
 {
     bool flipV = true;
 
-    models.model.loadFromFile(ASSETS_SRC_DIR "/Model/scifipistol/SciFiPistol.fbx", device, queue, FileLoadingFlags::PreTransformVertices | FileLoadingFlags::PreMultiplyVertexColors | FileLoadingFlags::FlipY);
+    models.model.loadFromFile(ASSETS_SRC_DIR "/Model/scifipistol/SciFiPistol.fbx", deviceVK, queue, FileLoadingFlags::PreTransformVertices | FileLoadingFlags::PreMultiplyVertexColors | FileLoadingFlags::FlipY);
 
     return true;
 }
@@ -1678,7 +1456,7 @@ void VulkanApp::createRenderPass()
         .pDependencies = &dependency
     };
 
-    renderPass = device.createRenderPass(renderPassInfo);
+    renderPass = deviceVK->logicDevice.createRenderPass(renderPassInfo);
 }
 
 void VulkanApp::createFramebuffers()
@@ -1698,7 +1476,7 @@ void VulkanApp::createFramebuffers()
             .height = swapChainExtent.height,
             .layers = 1
         };
-        swapChainFramebuffers.push_back(std::move(device.createFramebuffer(framebufferInfo)));
+        swapChainFramebuffers.push_back(std::move(deviceVK->logicDevice.createFramebuffer(framebufferInfo)));
     }
 }
 
@@ -1807,7 +1585,7 @@ void VulkanApp::createoffScreenFramebuffer()
         .pDependencies = dependencies.data()
     };
 
-    offScreenFramebuffer.renderPass = device.createRenderPass(renderPassInfo);
+    offScreenFramebuffer.renderPass = deviceVK->logicDevice.createRenderPass(renderPassInfo);
 
     std::array<vk::ImageView, 4> attachments{};
     attachments[0] = offScreenFramebuffer.position.view;
@@ -1824,9 +1602,9 @@ void VulkanApp::createoffScreenFramebuffer()
         .layers = 1
     };
 
-    offScreenFramebuffer.framebuffer = device.createFramebuffer(framebufferCI);
+    offScreenFramebuffer.framebuffer = deviceVK->logicDevice.createFramebuffer(framebufferCI);
 
-    vk::PhysicalDeviceProperties properties = physicalDevice.getProperties();
+    vk::PhysicalDeviceProperties properties = deviceVK->physicalDevice.getProperties();
     vk::SamplerCreateInfo samplerInfo{
         // Magnification concerns the oversampling problem describes above, and minification concerns undersampling. 
         .magFilter = vk::Filter::eNearest,
@@ -1851,7 +1629,7 @@ void VulkanApp::createoffScreenFramebuffer()
         .maxLod = 1.0f,
         .borderColor = vk::BorderColor::eFloatOpaqueWhite
     };
-    colorSampler = device.createSampler(samplerInfo);
+    colorSampler = deviceVK->logicDevice.createSampler(samplerInfo);
 }
 
 void VulkanApp::createAttachment(vk::Format format, vk::ImageUsageFlagBits usage, FramebufferAttachment* attachment)
@@ -1870,11 +1648,11 @@ void VulkanApp::createAttachment(vk::Format format, vk::ImageUsageFlagBits usage
             aspectMask = vk::ImageAspectFlagBits::eDepth | vk::ImageAspectFlagBits::eStencil;
     }
 
-    createImage(offScreenFramebuffer.width, offScreenFramebuffer.height, format, vk::ImageTiling::eOptimal, usage | vk::ImageUsageFlagBits::eSampled, vk::MemoryPropertyFlagBits::eDeviceLocal, attachment->image, attachment->mem);
+    deviceVK->CreateImage(offScreenFramebuffer.width, offScreenFramebuffer.height, format, 1, vk::ImageTiling::eOptimal, usage | vk::ImageUsageFlagBits::eSampled, vk::MemoryPropertyFlagBits::eDeviceLocal, attachment->image, attachment->mem);
     vk::ImageViewCreateInfo imageViewCreateInfo{ 
         .viewType = vk::ImageViewType::e2D, 
         .format = format,
         .subresourceRange = { aspectMask, 0, 1, 0, 1 }
     };
-    attachment->view = device.createImageView(imageViewCreateInfo);
+    attachment->view = deviceVK->logicDevice.createImageView(imageViewCreateInfo);
 }

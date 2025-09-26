@@ -1,8 +1,7 @@
 #include <DeferredRendering/Model.h>
+
 #include <format>
 #include <iostream>
-
-#define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 
 static std::string toLower(const std::string& s) {
@@ -17,9 +16,9 @@ static std::string getExtension(const std::string& path) {
     return toLower(path.substr(p + 1));
 }
 
-void Texture::loadImage(std::string_view path, vk::raii::Device *device, const vk::raii::Queue &queue)
+void Texture::loadImage(std::string_view path, VulkanDevice* device, const vk::raii::Queue &queue)
 {
-    this->device = device;
+    this->deviceVK = device;
 
     bool isKtx = false;
     // Image points to an external ktx file
@@ -32,9 +31,8 @@ void Texture::loadImage(std::string_view path, vk::raii::Device *device, const v
     if (!isKtx)
     {
         int texWidth, texHeight, texChannels;
-        std::string texturePath = ASSETS_SRC_DIR "/Model/kris-light-world-form-deltarune/textures/krish_light_form_text.png";
-        stbi_uc* pixels = stbi_load(texturePath.c_str(), &texWidth, &texHeight, &texChannels,
-            // The STBI_rgb_alpha value forces the image to be loaded with an alpha channel, even if it doesn’t have one
+        stbi_uc* pixels = stbi_load(path.data(), &texWidth, &texHeight, &texChannels,
+            // The STBI_rgb_alpha value forces the image to be loaded with an alpha channel, even if it doesn't have one
             STBI_rgb_alpha);
         
         if (!pixels)
@@ -44,7 +42,21 @@ void Texture::loadImage(std::string_view path, vk::raii::Device *device, const v
         vk::raii::DeviceMemory stagingBufferMemory = nullptr;
         mipLevels = static_cast<uint32_t>(floor(log2(std::max(width, height))) + 1.0);
 
-        //todo: Device Context -- divece, physic device
+        vk::raii::Buffer stagingBuffer = nullptr;
+        vk::raii::DeviceMemory stagingBufferMemory = nullptr;
+        deviceVK->CreateBuffer(imageSize, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, stagingBuffer, stagingBufferMemory);
+        void* dataStaging = stagingBufferMemory.mapMemory(0, imageSize);
+        memcpy(dataStaging, pixels, imageSize);
+        stagingBufferMemory.unmapMemory();
+
+        stbi_image_free(pixels);
+
+        deviceVK->CreateImage(texWidth, texHeight, vk::Format::eR8G8B8A8Srgb, mipLevels, vk::ImageTiling::eOptimal, vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled, vk::MemoryPropertyFlagBits::eDeviceLocal, image, deviceMemory);
+        deviceVK->transitionImageLayout(image, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal, queue);
+        deviceVK->copyBufferToImage(stagingBuffer, image, static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight), queue);
+        deviceVK->transitionImageLayout(image, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, queue);
+
+        //todo: Generate the mip chain
     }
 
     // Sampler
@@ -67,20 +79,20 @@ void Texture::loadImage(std::string_view path, vk::raii::Device *device, const v
         /*
             The unnormalizedCoordinates field specifies which coordinate system you want to use to address texels in an image.
             If this field is VK_TRUE, then you can simply use coordinates within the [0, texWidth) and [0, texHeight) range. If it is VK_FALSE, then the texels are addressed using the [0, 1) range on all axes.
-            Real-world applications almost always use normalized coordinates, because then it’s possible to use textures of varying resolutions with the exact same coordinates.
+            Real-world applications almost always use normalized coordinates, because then itï¿½s possible to use textures of varying resolutions with the exact same coordinates.
         */
         .unnormalizedCoordinates = vk::False
     };
-    sampler = device->createSampler(samplerCI);
+    sampler = deviceVK->logicDevice.createSampler(samplerCI);
 }
 
 void Texture::updateDescriptor()
 {
 }
 
-bool Model::loadFromFile(std::string filename, vk::raii::Device &device, const vk::raii::Queue &transferQueue, FileLoadingFlags fileLoadingFlags, float scale)
+bool Model::loadFromFile(std::string filename, VulkanDevice* device, const vk::raii::Queue &transferQueue, FileLoadingFlags fileLoadingFlags, float scale)
 {
-    this->device = &device;
+    this->deviceVK = device;
 
     // Create manager & iosettings
     FbxManager* manager = FbxManager::Create();
@@ -180,7 +192,7 @@ void Model::loadImages(FbxNode* node, const vk::raii::Queue& transferQueue)
 
                 std::string path = pFileTex->GetFileName();
                 Texture texture;
-                texture.loadImage(path, device, transferQueue);
+                texture.loadImage(path, deviceVK, transferQueue);
             }
 
             currentProperty = mat->GetNextProperty(currentProperty);

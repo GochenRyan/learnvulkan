@@ -1,6 +1,7 @@
 #pragma once
-#include <DeferredRendering/VulkanBuffer.h>
 #include <DeferredRendering/Model.h>
+#include <DeferredRendering/VulkanBuffer.h>
+#include <DeferredRendering/VulkanDevice.h>
 
 #include <iostream>
 #include <stdexcept>
@@ -217,8 +218,7 @@ private:
         Vulkan Memory Management : https://developer.nvidia.com/vulkan-memory-management
     */
     void createVertexBuffer();
-    uint32_t findMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties);
-    void createBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage, vk::MemoryPropertyFlags properties, vk::raii::Buffer& buffer, vk::raii::DeviceMemory& bufferMemory);
+    
     void copyBuffer(vk::raii::Buffer& srcBuffer, vk::raii::Buffer& dstBuffer, vk::DeviceSize size);
 
     void createIndexBuffer();
@@ -230,10 +230,7 @@ private:
     void createDescriptorSets();
 
     void createTextureImage();
-    void createImage(uint32_t width, uint32_t height, vk::Format format, vk::ImageTiling tiling, vk::ImageUsageFlags usage, vk::MemoryPropertyFlags properties, vk::raii::Image& image, vk::raii::DeviceMemory& imageMemory);
     std::unique_ptr<vk::raii::CommandBuffer> beginSingleTimeCommands();
-    void endSingleTimeCommands(vk::raii::CommandBuffer& commandBuffer);
-    void transitionImageLayout(const vk::raii::Image& image, vk::ImageLayout oldLayout, vk::ImageLayout newLayout);
     void copyBufferToImage(const vk::raii::Buffer& buffer, vk::raii::Image& image, uint32_t width, uint32_t height);
 
     void createTextureImageView();
@@ -260,8 +257,6 @@ private:
     vk::raii::Instance instance{ nullptr };
     vk::raii::DebugUtilsMessengerEXT debugMessenger{ nullptr };
 
-    vk::raii::PhysicalDevice physicalDevice{ nullptr };
-
     std::vector<const char*> requiredDeviceExtension = {
         vk::KHRSwapchainExtensionName,  // It provides the capability of "swapchain" for Vulkan applications - that is, on top of the Window System Integration (WSI), to implement the process of rendering images to the screen
         vk::KHRSpirv14ExtensionName,  // Allow the Vulkan driver to directly accept the shader Intermediate Language of version SPIR-V 1.4. SPIR-V is the shader binary format used by Vulkan (as well as OpenCL).
@@ -269,7 +264,6 @@ private:
         vk::KHRCreateRenderpass2ExtensionName  // The creation interface for "Render Pass" has been expanded and improved, allowing you to specify more abundant subpass dependencies and attachment state transitions at one time during creation.
     };
 
-    vk::raii::Device device{ nullptr };
     vk::raii::Queue queue{ nullptr };
 
     // KHR: Khronos
@@ -283,8 +277,6 @@ private:
     std::vector<vk::raii::ImageView> swapChainImageViews;
 
     vk::raii::PipelineLayout pipelineLayout = nullptr;
-
-    vk::raii::CommandPool commandPool = nullptr;
     std::vector<vk::raii::CommandBuffer> commandBuffers;
 
     std::vector<vk::raii::Semaphore> presentCompleteSemaphores;
@@ -367,6 +359,8 @@ private:
         Model model;
         Model Floor;
     } models;
+
+    VulkanDevice* deviceVK = nullptr;
 public:
     /*
         Although many drivers and platforms trigger VK_ERROR_OUT_OF_DATE_KHR automatically after a window resize, it is not guaranteed to happen. 

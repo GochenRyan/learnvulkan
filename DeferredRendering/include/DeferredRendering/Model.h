@@ -1,4 +1,6 @@
 #pragma once
+#include <DeferredRendering/VulkanDevice.h>
+
 #include <vulkan/vulkan_raii.hpp>
 
 #define GLM_FORCE_RADIANS
@@ -30,8 +32,9 @@ inline FileLoadingFlags operator|(FileLoadingFlags lhs, FileLoadingFlags rhs)
 */
 struct Texture
 {
-    vk::raii::Device* device = nullptr;
+    VulkanDevice* deviceVK = nullptr;
     vk::raii::Image image = nullptr;
+    vk::raii::DeviceMemory deviceMemory = nullptr;
     vk::raii::ImageView view = nullptr;
     uint32_t width, height;
     uint32_t mipLevels;
@@ -41,12 +44,12 @@ struct Texture
     uint32_t index;
     std::string format;
     void updateDescriptor();
-    void loadImage(std::string_view path, vk::raii::Device* device, const vk::raii::Queue& queue);
+    void loadImage(std::string_view path, VulkanDevice* device, const vk::raii::Queue& queue);
 };
 
 struct Material
 {
-    vk::raii::Device* device = nullptr;
+    VulkanDevice* deviceVK = nullptr;
     AlphaMode alphaMode = AlphaMode::ALPHAMODE_OPAQUE;
     float alphaCutoff = 1.0f;
     float metallicFactor = 1.0f;
@@ -55,7 +58,7 @@ struct Material
     std::unordered_map<std::string, Texture*> textures;
     vk::raii::DescriptorSet descriptorSet = nullptr;
 
-    Material(vk::raii::Device* device) : device(device) {};
+    Material(VulkanDevice* device) : deviceVK(device) {};
     //void createDescriptorSet(vk::raii::DescriptorPool descriptorPool, vk::raii::DescriptorSetLayout descriptorSetLayout, DescriptorBindingFlags descriptorBindingFlags);
 };
 
@@ -88,7 +91,7 @@ public:
     /*
         Processing images will involve using a queue.
     */
-    bool loadFromFile(std::string filename, vk::raii::Device& device, const vk::raii::Queue& transferQueue, FileLoadingFlags fileLoadingFlags = FileLoadingFlags::None, float scale = 1.0f);
+    bool loadFromFile(std::string filename, VulkanDevice* device, const vk::raii::Queue& transferQueue, FileLoadingFlags fileLoadingFlags = FileLoadingFlags::None, float scale = 1.0f);
     // void loadNode();
     // void loadSkins();
      void loadImages(FbxNode* node, const vk::raii::Queue& transferQueue);
@@ -138,7 +141,7 @@ public:
     std::vector<Texture> textures;
     std::vector<Material> materials;
 
-    vk::raii::Device* device = nullptr;
+    VulkanDevice* deviceVK = nullptr;
 
     // std::vector<Animation> animations;
 
