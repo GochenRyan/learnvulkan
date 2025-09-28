@@ -39,7 +39,6 @@ void Texture::loadImage(std::string_view path, VulkanDevice* device, const vk::r
             throw std::runtime_error(std::format("failed to load texture image : {0}", path));
 
         vk::DeviceSize imageSize = texWidth * texHeight * 4;
-        vk::raii::DeviceMemory stagingBufferMemory = nullptr;
         mipLevels = static_cast<uint32_t>(floor(log2(std::max(width, height))) + 1.0);
 
         vk::raii::Buffer stagingBuffer = nullptr;
@@ -51,14 +50,83 @@ void Texture::loadImage(std::string_view path, VulkanDevice* device, const vk::r
 
         stbi_image_free(pixels);
 
-        deviceVK->CreateImage(texWidth, texHeight, vk::Format::eR8G8B8A8Srgb, mipLevels, vk::ImageTiling::eOptimal, vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled, vk::MemoryPropertyFlagBits::eDeviceLocal, image, deviceMemory);
+        deviceVK->CreateImage(texWidth, texHeight, vk::Format::eR8G8B8A8Srgb, mipLevels, vk::ImageTiling::eOptimal, vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eSampled, vk::MemoryPropertyFlagBits::eDeviceLocal, image, deviceMemory);
         deviceVK->transitionImageLayout(image, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal, queue);
         deviceVK->copyBufferToImage(stagingBuffer, image, static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight), queue);
-        deviceVK->transitionImageLayout(image, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, queue);
+        deviceVK->transitionImageLayout(image, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eTransferSrcOptimal, queue);
 
-        //todo: Generate the mip chain
+        // Generate the mip chain
+        std::unique_ptr<vk::raii::CommandBuffer> blitCmd = deviceVK->beginSingleTimeCommands();
+        for (uint32_t i = 1; i < mipLevels; i++)
+        {
+            vk::ImageBlit imageBlit{
+                .srcSubresource = {
+                    .aspectMask = vk::ImageAspectFlagBits::eColor,
+                    .mipLevel = i - 1,
+                    .layerCount = 1
+                },
+                .dstSubresource = {
+                    .aspectMask = vk::ImageAspectFlagBits::eColor,
+                    .mipLevel = i,
+                    .layerCount = 1
+                }
+            };
+            imageBlit.srcOffsets[1] = { int32_t(width >> (i - 1)), int32_t(height >> (i - 1)), 1 };
+            imageBlit.srcOffsets[1] = { int32_t(width >> i), int32_t(height >> i), 1 };
+
+            vk::ImageSubresourceRange mipSubRange{
+                .aspectMask = vk::ImageAspectFlagBits::eColor,
+                .baseMipLevel = i,
+                .levelCount = 1,
+                .layerCount = 1
+            };
+            {
+                vk::ImageMemoryBarrier imageMemoryBarrier{
+                    .srcAccessMask = vk::AccessFlagBits::eNone,
+                    .dstAccessMask = vk::AccessFlagBits::eTransferWrite,
+                    .oldLayout = vk::ImageLayout::eUndefined,
+                    .newLayout = vk::ImageLayout::eTransferDstOptimal,
+                    .image = image,
+                    .subresourceRange = mipSubRange
+                };
+                blitCmd->pipelineBarrier(vk::PipelineStageFlagBits::eTransfer, vk::PipelineStageFlagBits::eTransfer, {}, {}, {}, imageMemoryBarrier);   
+            }
+            blitCmd->blitImage(image, vk::ImageLayout::eTransferSrcOptimal, /* blitting between different levels of the same image */image, vk::ImageLayout::eTransferDstOptimal, imageBlit, vk::Filter::eLinear);
+            {
+                vk::ImageMemoryBarrier imageMemoryBarrier{
+                    .srcAccessMask = vk::AccessFlagBits::eTransferWrite,
+                    .dstAccessMask = vk::AccessFlagBits::eTransferRead,
+                    .oldLayout = vk::ImageLayout::eTransferDstOptimal,
+                    .newLayout = vk::ImageLayout::eTransferSrcOptimal,
+                    .image = image,
+                    .subresourceRange = mipSubRange
+                };
+                blitCmd->pipelineBarrier(vk::PipelineStageFlagBits::eTransfer, vk::PipelineStageFlagBits::eTransfer, {}, {}, {}, imageMemoryBarrier);
+            }
+        }
+        
+        vk::ImageMemoryBarrier barrier{
+            .oldLayout = vk::ImageLayout::eTransferSrcOptimal,
+            .newLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+            .image = image,
+            .subresourceRange = {
+                .aspectMask = vk::ImageAspectFlagBits::eColor,
+                .baseMipLevel = 0,
+                .levelCount = mipLevels,
+                .baseArrayLayer = 0,
+                .layerCount = 1
+            }
+        };
+        blitCmd->pipelineBarrier(vk::PipelineStageFlagBits::eTransfer, vk::PipelineStageFlagBits::eFragmentShader, {}, {}, {}, barrier);
+
+        deviceVK->endSingleTimeCommands(*blitCmd, queue);
+    }
+    else
+    {
+        //todo: ktx
     }
 
+    vk::PhysicalDeviceProperties properties = deviceVK->physicalDevice.getProperties();
     // Sampler
     vk::SamplerCreateInfo samplerCI{
         .magFilter = vk::Filter::eLinear,
@@ -69,9 +137,7 @@ void Texture::loadImage(std::string_view path, VulkanDevice* device, const vk::r
         .addressModeW = vk::SamplerAddressMode::eRepeat,
         .mipLodBias = 0,
         .anisotropyEnable = vk::True,
-        //todo: a good way to get maxSamplerAnisotropy
-        //.maxAnisotropy = properties.limits.maxSamplerAnisotropy,
-        .maxAnisotropy = 8.0f,
+        .maxAnisotropy = properties.limits.maxSamplerAnisotropy,
         .compareEnable = vk::False,
         .compareOp = vk::CompareOp::eAlways,
         .maxLod = (float)mipLevels,
@@ -84,10 +150,31 @@ void Texture::loadImage(std::string_view path, VulkanDevice* device, const vk::r
         .unnormalizedCoordinates = vk::False
     };
     sampler = deviceVK->logicDevice.createSampler(samplerCI);
+
+    vk::ImageViewCreateInfo viewCI{
+        .image = image,
+        .viewType = vk::ImageViewType::e2D,
+        .format = vk::Format::eR8G8B8A8Srgb,
+        .subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eColor, .levelCount = mipLevels, .layerCount = 1 }
+    };
+    deviceVK->logicDevice.createImageView(viewCI);
+
+    imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+    descriptor.sampler = sampler;
+    descriptor.imageView = view;
+    descriptor.imageLayout = imageLayout;
+}
+
+Texture::~Texture()
+{
+    deviceVK = nullptr;
 }
 
 void Texture::updateDescriptor()
 {
+    descriptor.sampler = sampler;
+    descriptor.imageView = view;
+    descriptor.imageLayout = imageLayout;
 }
 
 bool Model::loadFromFile(std::string filename, VulkanDevice* device, const vk::raii::Queue &transferQueue, FileLoadingFlags fileLoadingFlags, float scale)
@@ -154,13 +241,13 @@ bool Model::loadFromFile(std::string filename, VulkanDevice* device, const vk::r
 
     for (FbxNode* node : nodes)
     {
-        loadImages(node, transferQueue);
+        loadMaterials(node, transferQueue);
     }
 
     return false;
 }
 
-void Model::loadImages(FbxNode* node, const vk::raii::Queue& transferQueue)
+void Model::loadMaterials(FbxNode* node, const vk::raii::Queue& transferQueue)
 {
     if (!node) return;
     int matCount = node->GetMaterialCount();
@@ -169,33 +256,37 @@ void Model::loadImages(FbxNode* node, const vk::raii::Queue& transferQueue)
         FbxSurfaceMaterial* mat = node->GetMaterial(mi);
         if (!mat) continue;
 
+        Material material(deviceVK);
         FbxProperty currentProperty = mat->GetFirstProperty();
         while (currentProperty.IsValid())
         {
-            uint32_t unsupportedTexCnt = currentProperty.GetSrcObjectCount<FbxLayeredTexture>() + currentProperty.GetSrcObjectCount<FbxProceduralTexture>();
-            if (unsupportedTexCnt > 0)
+            const char* pFBXPropertyName = currentProperty.GetNameAsCStr();
+
+            if (const auto& iter = FBXPropertyToNew.find(pFBXPropertyName); iter != FBXPropertyToNew.cend())
             {
-                std::cerr << std::format("Unsupported texture count: {0}\n", unsupportedTexCnt);
-                return;
-            }
-
-            uint32_t supportedTexCnt = currentProperty.GetSrcObjectCount<FbxFileTexture>();
-
-            for (uint32_t texIndex = 0; texIndex < supportedTexCnt; ++texIndex)
-            {
-                FbxFileTexture* pFileTex = currentProperty.GetSrcObject<FbxFileTexture>();
-                if (!pFileTex)
-                    continue;
-
-                const char* pFBXPropertyName = currentProperty.GetNameAsCStr();
-                const auto& iterPropertyName = FBXPropertyToNew.find(pFBXPropertyName);
-
-                std::string path = pFileTex->GetFileName();
                 Texture texture;
                 texture.loadImage(path, deviceVK, transferQueue);
+                texture.index = static_cast<uint32_t>(textureLookup.size());
+                textureLookup.push_back(std::move(texture));
+
+                material.textureMap[iter->second] = texture.index;
+                materialLookup.push_back(material);
+            }
+            else
+            {
+                throw std::runtime_error(std::format("Can not find material: {0}", pFBXPropertyName));
             }
 
             currentProperty = mat->GetNextProperty(currentProperty);
         }
+    }
+}
+
+void Model::loadNodeRecursively(FbxNode* node)
+{
+    const auto* pNodeAttribute = node->GetNodeAttribute();
+
+    if (pNodeAttribute && pNodeAttribute->GetAttributeType() == FbxNodeAttribute::eMesh)
+    {
     }
 }

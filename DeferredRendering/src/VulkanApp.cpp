@@ -943,7 +943,7 @@ void VulkanApp::createVertexBuffer()
 
 void VulkanApp::copyBuffer(vk::raii::Buffer& srcBuffer, vk::raii::Buffer& dstBuffer, vk::DeviceSize size)
 {
-    auto commandCopyBuffer = beginSingleTimeCommands();
+    auto commandCopyBuffer = deviceVK->beginSingleTimeCommands();
     commandCopyBuffer->copyBuffer(srcBuffer, dstBuffer, vk::BufferCopy(0, 0, size));
     deviceVK->endSingleTimeCommands(*commandCopyBuffer, queue);
 }

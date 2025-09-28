@@ -230,9 +230,6 @@ private:
     void createDescriptorSets();
 
     void createTextureImage();
-    std::unique_ptr<vk::raii::CommandBuffer> beginSingleTimeCommands();
-    void copyBufferToImage(const vk::raii::Buffer& buffer, vk::raii::Image& image, uint32_t width, uint32_t height);
-
     void createTextureImageView();
     vk::raii::ImageView createImageView(vk::raii::Image& image, vk::Format format, vk::ImageAspectFlags aspectFlags);
     void createTextureSampler();

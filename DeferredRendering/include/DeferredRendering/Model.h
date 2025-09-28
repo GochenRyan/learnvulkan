@@ -7,6 +7,7 @@
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
 
 #include <vector>
 #include <fbxsdk.h>
@@ -32,16 +33,24 @@ inline FileLoadingFlags operator|(FileLoadingFlags lhs, FileLoadingFlags rhs)
 */
 struct Texture
 {
+    Texture() = default;
+    ~Texture();
+    Texture(const Texture& rhs) = delete;
+    Texture& operator=(const Texture& rhs) = delete;
+    Texture(Texture&& rhs) = default;
+    Texture& operator=(Texture&& rhs) = default;
+
     VulkanDevice* deviceVK = nullptr;
     vk::raii::Image image = nullptr;
     vk::raii::DeviceMemory deviceMemory = nullptr;
     vk::raii::ImageView view = nullptr;
-    uint32_t width, height;
-    uint32_t mipLevels;
-    uint32_t layerCount;
+    uint32_t width{}, height{};
+    uint32_t mipLevels{};
+    uint32_t layerCount{};
+    vk::ImageLayout imageLayout{};
+    uint32_t index{};
     vk::DescriptorImageInfo descriptor;
     vk::raii::Sampler sampler = nullptr;
-    uint32_t index;
     std::string format;
     void updateDescriptor();
     void loadImage(std::string_view path, VulkanDevice* device, const vk::raii::Queue& queue);
@@ -55,21 +64,80 @@ struct Material
     float metallicFactor = 1.0f;
     float roughnessFactor = 1.0f;
     glm::vec4 baseColorFactor = glm::vec4(1.0f);
-    std::unordered_map<std::string, Texture*> textures;
+    std::unordered_map<std::string, size_t> textureMap;
     vk::raii::DescriptorSet descriptorSet = nullptr;
 
     Material(VulkanDevice* device) : deviceVK(device) {};
     //void createDescriptorSet(vk::raii::DescriptorPool descriptorPool, vk::raii::DescriptorSetLayout descriptorSetLayout, DescriptorBindingFlags descriptorBindingFlags);
 };
 
+struct Primitive {
+    uint32_t firstIndex;
+    uint32_t indexCount;
+    uint32_t firstVertex;
+    uint32_t vertexCount;
+    size_t materialIndex;
+
+    struct Dimensions {
+        glm::vec3 min = glm::vec3(FLT_MAX);
+        glm::vec3 max = glm::vec3(-FLT_MAX);
+        glm::vec3 size;
+        glm::vec3 center;
+        float radius;
+    } dimensions;
+
+    void setDimensions(glm::vec3 min, glm::vec3 max);
+    Primitive(uint32_t firstIndex, uint32_t indexCount, size_t materialIndex) : firstIndex(firstIndex), indexCount(indexCount), materialIndex(materialIndex) {};
+};
+
+struct Mesh
+{
+    VulkanDevice* deviceVK = nullptr;
+    std::vector<Primitive> primitives;
+    std::string name;
+
+    struct UniformBuffer {
+        vk::raii::Buffer buffer;
+        vk::raii::DeviceMemory memory;
+        vk::DescriptorBufferInfo descriptor;
+        vk::raii::DescriptorSet descriptorSet = VK_NULL_HANDLE;
+        void* mapped;
+    } uniformBuffer;
+
+    struct UniformBlock {
+        glm::mat4 matrix;
+        glm::mat4 jointMatrix[64]{};
+        float jointcount{ 0 };
+    } uniformBlock;
+
+    Mesh(VulkanDevice* deviceVK, glm::mat4 matrix);
+    ~Mesh();
+};
+
 struct Skin
 {
-
+    std::string name;
+    size_t skeletonRootNodeIndex;
+    std::vector<size_t> jointNodeIndices;
+    std::vector<glm::mat4> inverseBindMatrices;
 };
 
 struct Node
 {
-
+    size_t index;
+    size_t parentIndex;
+    std::vector<size_t> childIndices;
+    glm::mat4 matrix;
+    std::string name;
+    Mesh mesh;
+    size_t skinIndex;
+    glm::vec3 translation{};
+    glm::vec3 scale{ 1.0f };
+    glm::quat rotation{};
+    glm::mat4 localMatrix();
+    glm::mat4 getMatrix();
+    void update();
+    ~Node();
 };
 
 // struct Animation
@@ -92,11 +160,10 @@ public:
         Processing images will involve using a queue.
     */
     bool loadFromFile(std::string filename, VulkanDevice* device, const vk::raii::Queue& transferQueue, FileLoadingFlags fileLoadingFlags = FileLoadingFlags::None, float scale = 1.0f);
-    // void loadNode();
+     void loadNodeRecursively(FbxNode* node);
     // void loadSkins();
-     void loadImages(FbxNode* node, const vk::raii::Queue& transferQueue);
      //bool getTextureMetaFromFile(const std::string& path, Texture& outMeta);
-    // void loadMaterials();
+     void loadMaterials(FbxNode* node, const vk::raii::Queue& transferQueue);
     // void loadAnimations();
 public:
     //Node* findNode(Node* parent, uint32_t index);
@@ -133,13 +200,12 @@ public:
         float radius;
     } dimensions;
 
-    std::vector<Node*> nodes;
-    std::vector<Node*> linearNodes;
+    std::vector<Node> nodeLookup;
 
-    std::vector<Skin*> skins;
+    std::vector<Skin> skinLookup;
 
-    std::vector<Texture> textures;
-    std::vector<Material> materials;
+    std::vector<Texture> textureLookup;
+    std::vector<Material> materialLookup;
 
     VulkanDevice* deviceVK = nullptr;
 
