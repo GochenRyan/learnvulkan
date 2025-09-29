@@ -71,6 +71,18 @@ struct Material
     //void createDescriptorSet(vk::raii::DescriptorPool descriptorPool, vk::raii::DescriptorSetLayout descriptorSetLayout, DescriptorBindingFlags descriptorBindingFlags);
 };
 
+constexpr uint8_t MAX_UV_SETS = 8;
+
+struct Vertex {
+    glm::vec3 pos;
+    glm::vec3 normal;
+    glm::vec2 uv[MAX_UV_SETS];
+    glm::vec4 color;
+    //glm::vec4 joint0;
+    //glm::vec4 weight0;
+    glm::vec4 tangent;
+};
+
 struct Primitive {
     uint32_t firstIndex;
     uint32_t indexCount;
@@ -199,6 +211,8 @@ public:
         glm::vec3 center;
         float radius;
     } dimensions;
+
+    std::vector<Vertex> vertexLookup;
 
     std::vector<Node> nodeLookup;
 

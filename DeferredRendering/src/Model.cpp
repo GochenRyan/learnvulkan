@@ -284,9 +284,54 @@ void Model::loadMaterials(FbxNode* node, const vk::raii::Queue& transferQueue)
 
 void Model::loadNodeRecursively(FbxNode* node)
 {
+    
     const auto* pNodeAttribute = node->GetNodeAttribute();
 
     if (pNodeAttribute && pNodeAttribute->GetAttributeType() == FbxNodeAttribute::eMesh)
     {
+        std::string name = node->GetName();
+
     }
 }
+
+//template<typename T1, typename T2>
+//static void GetFBXAttributeValue(const FbxLayerElementTemplate<T1>* element, std::vector<T2>& output, const int* indices, const int indexCount, const int vertexCount, const T2& defaultValue)
+//{
+//    output.resize(indexCount, defaultValue);
+//
+//    const FbxLayerElement::EMappingMode mappingMode = element->GetMappingMode();
+//    if (mappingMode == FbxLayerElement::eByControlPoint)
+//    {
+//        if (element->GetDirectArray().GetCount() != vertexCount)
+//        {
+//            return;
+//        }
+//
+//        for (int f = 0; f < indexCount; f++)
+//        {
+//            int index = (element->GetReferenceMode() == FbxGeometryElement::eDirect)
+//                ? indices[f]
+//                : element->GetIndexArray().GetAt(indices[f]);
+//            output[f] = uvElement->GetDirectArray().GetAt(index);
+//        }
+//    }
+//    else if (mappingMode == FbxLayerElement::eByPolygonVertex)
+//    {
+//        for (int f = 0; f < indexCount; ++f)
+//        {
+//            int index = (element->GetReferenceMode() == FbxGeometryElement::eDirect)
+//                ? indices[f]
+//                : element->GetIndexArray().GetAt(indices[f]);
+//            output[f] = uvElement->GetDirectArray().GetAt(index);
+//        }
+//    }
+//    else if (mappingMode == FbxLayerElement::eByPolygon)
+//    {   
+//    }
+//    else if (mappingMode == FbxLayerElement::eAllSame)
+//    {
+//    }
+//    else
+//    {
+//    }
+//}
