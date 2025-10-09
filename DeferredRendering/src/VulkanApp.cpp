@@ -127,7 +127,7 @@ void VulkanApp::Run()
 {
     initWindow();
     initVulkan();
-    mainLoop();
+    // mainLoop();
     cleanup();
 }
 
@@ -142,30 +142,30 @@ void VulkanApp::initWindow()
 
 void VulkanApp::initVulkan()
 {
-    createInstance();
-    setupDebugMessenger();
-    createSurface();
-    pickPhysicalDevice();
-    createLogicalDevice();
-    createSwapChain();
-    createImageViews();
-    createRenderPass();
-    createDescriptorSetLayout();
-    createGraphicPipeline();
-    createCommandPool();
-    createDepthResources();
-    createFramebuffers();
-    createTextureImage();
-    createTextureImageView();
-    createTextureSampler();
+    // createInstance();
+    // setupDebugMessenger();
+    // createSurface();
+    // pickPhysicalDevice();
+    // createLogicalDevice();
+    // createSwapChain();
+    // createImageViews();
+    // createRenderPass();
+    // createDescriptorSetLayout();
+    // createGraphicPipeline();
+    // createCommandPool();
+    // createDepthResources();
+    // createFramebuffers();
+    // createTextureImage();
+    // createTextureImageView();
+    // createTextureSampler();
     loadModel();
-    createVertexBuffer();
-    createIndexBuffer();
-    createUniformBuffers();
-    createDescriptorPool();
-    createDescriptorSets();
-    createCommandBuffers();
-    createSyncObjects();
+    // createVertexBuffer();
+    // createIndexBuffer();
+    // createUniformBuffers();
+    // createDescriptorPool();
+    // createDescriptorSets();
+    // createCommandBuffers();
+    // createSyncObjects();
 }
 
 void VulkanApp::mainLoop()
@@ -544,15 +544,16 @@ void VulkanApp::createGraphicPipeline()
     // Final fullscreen composition pass pipeline
     pipelines.composition = deviceVK->logicDevice.createGraphicsPipeline(nullptr, pipelineCI);
 
-    auto bindingDescription = Vertex::getBindingDescription();
-    auto attributeDescriptions = Vertex::getAttributeDescriptions();
-    vk::PipelineVertexInputStateCreateInfo vertexInputCI{
-        .vertexBindingDescriptionCount = 1,
-        .pVertexBindingDescriptions = &bindingDescription,
-        .vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size()),
-        .pVertexAttributeDescriptions = attributeDescriptions.data()
-    };
-    pipelineCI.pVertexInputState = &vertexInputCI;
+    // auto bindingDescription = Vertex::getBindingDescription();
+    // auto attributeDescriptions = Vertex::getAttributeDescriptions();
+    
+    // vk::PipelineVertexInputStateCreateInfo vertexInputCI{
+    //     .vertexBindingDescriptionCount = 1,
+    //     .pVertexBindingDescriptions = &bindingDescription,
+    //     .vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size()),
+    //     .pVertexAttributeDescriptions = attributeDescriptions.data()
+    // };
+    // pipelineCI.pVertexInputState = &vertexInputCI;
     rasterizerCI.cullMode = vk::CullModeFlagBits::eBack;
 
     // Offscreen pipeline
@@ -897,48 +898,6 @@ void VulkanApp::cleanupSwapChain()
 */
 void VulkanApp::createVertexBuffer()
 {
-    //vk::DeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
-    //createBuffer(bufferSize, vk::BufferUsageFlagBits::eVertexBuffer, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, vertexBuffer, vertexBufferMemory);
-    //void* data = vertexBufferMemory.mapMemory(0, bufferSize);
-    ///*
-    //    Unfortunately, the driver may not immediately copy the data into the buffer memory, for example, because of caching. 
-    //    It is also possible that writes to the buffer are not visible in the mapped memory yet. There are two ways to deal with that problem:
-    //        Use a memory heap that is host coherent, indicated with VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
-    //        Call vkFlushMappedMemoryRanges after writing to the mapped memory, and call vkInvalidateMappedMemoryRanges before reading from the mapped memory
-
-    //    Flushing memory ranges or using a coherent memory heap means that the driver will be aware of our writings to the buffer, but it doesn't mean that they are actually visible on the GPU yet. 
-    //    The transfer of data to the GPU is an operation that happens in the background, and the specification simply tells us that it is guaranteed to be complete as of the next call to vkQueueSubmit.
-    //*/
-    //memcpy(data, vertices.data(), static_cast<size_t>(bufferSize));
-    //vertexBufferMemory.unmapMemory();
-
-    /*
-        The memory type that allows us to access it from the CPU may not be the most optimal memory type for the graphics card itself to read from. 
-        The most optimal memory has the VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT flag and is usually not accessible by the CPU on dedicated graphics cards.
-        =>  One staging buffer in CPU accessible memory to upload the data from the vertex array to, and the final vertex buffer in device local memory. 
-            We'll then use a buffer copy command to move the data from the staging buffer to the actual vertex buffer.
-    */
-
-    /*
-        VK_BUFFER_USAGE_TRANSFER_SRC_BIT: Buffer can be used as source in a memory transfer operation.
-        VK_BUFFER_USAGE_TRANSFER_DST_BIT: Buffer can be used as destination in a memory transfer operation.
-    */
-    vk::DeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
-    vk::raii::Buffer stagingBuffer = nullptr;
-    vk::raii::DeviceMemory stagingBufferMemory = nullptr;
-    deviceVK->CreateBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, stagingBuffer, stagingBufferMemory);
-    void* dataStaging = stagingBufferMemory.mapMemory(0, bufferSize);
-    memcpy(dataStaging, vertices.data(), bufferSize);
-    stagingBufferMemory.unmapMemory();
-    /*
-        The DEVICE_LOCAL_BIT flag indicates that the memory is video memory (dedicated to the GPU) and can only be accessed by the GPU. 
-        This kind of memory cannot be mapped by the CPU (that is, the pointer cannot be obtained through vkMapMemory), because the address space of the video memory is invisible to the CPU.
-
-        If the data is directly written to the buffer in the system memory through the CPU, the GPU may need to wait for the CPU to complete the writing before it can start processing the data. 
-        By using the staging buffer and the GPU's transmission queue, asynchronous transmission can be achieved to avoid blocking the GPU.
-    */
-    deviceVK->CreateBuffer(bufferSize, vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eTransferDst, vk::MemoryPropertyFlagBits::eDeviceLocal, vertexBuffer, vertexBufferMemory);
-    copyBuffer(stagingBuffer, vertexBuffer, bufferSize);
 }
 
 void VulkanApp::copyBuffer(vk::raii::Buffer& srcBuffer, vk::raii::Buffer& dstBuffer, vk::DeviceSize size)
@@ -950,16 +909,6 @@ void VulkanApp::copyBuffer(vk::raii::Buffer& srcBuffer, vk::raii::Buffer& dstBuf
 
 void VulkanApp::createIndexBuffer()
 {
-    vk::DeviceSize bufferSize = sizeof(indices[0]) * indices.size();
-    vk::raii::Buffer stagingBuffer = nullptr;
-    vk::raii::DeviceMemory stagingBufferMemory = nullptr;
-    deviceVK->CreateBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, stagingBuffer, stagingBufferMemory);
-    void* dataStaging = stagingBufferMemory.mapMemory(0, bufferSize);
-    memcpy(dataStaging, indices.data(), bufferSize);
-    stagingBufferMemory.unmapMemory();
-
-    deviceVK->CreateBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eIndexBuffer, vk::MemoryPropertyFlagBits::eDeviceLocal, indexBuffer, indexBufferMemory);
-    copyBuffer(stagingBuffer, indexBuffer, bufferSize);
 }
 
 void VulkanApp::createUniformBuffers()

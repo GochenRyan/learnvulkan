@@ -28,6 +28,94 @@ inline FileLoadingFlags operator|(FileLoadingFlags lhs, FileLoadingFlags rhs)
     return static_cast<FileLoadingFlags>(static_cast<uint32_t>(lhs) | static_cast<uint32_t>(rhs));
 }
 
+inline glm::vec2 FBXToGLMType(const FbxVector2& t)
+{
+    return glm::vec2(
+        static_cast<float>(t.mData[0]),
+        static_cast<float>(t.mData[1])
+    );
+}
+
+inline glm::vec3 FBXToGLMType(const FbxVector4& t)
+{
+    return glm::vec3(
+        static_cast<float>(t.mData[0]),
+        static_cast<float>(t.mData[1]),
+        static_cast<float>(t.mData[2])
+    );
+}
+
+inline glm::vec4 FBXToGLMType(const FbxColor& t)
+{
+    return glm::vec4(
+        static_cast<float>(t.mRed),
+        static_cast<float>(t.mGreen),
+        static_cast<float>(t.mBlue),
+        static_cast<float>(t.mAlpha)
+    );
+}
+
+template<typename T1, typename T2>
+void GetFBXAttributeValue(const FbxLayerElementTemplate<T1>* element, std::vector<T2>& output, const int* indices, const int indexCount, const std::vector<uint32_t>& polygonSizes, const int polygonCount, const int vertexCount, const T2& defaultValue)
+{
+    output.resize(indexCount, defaultValue);
+
+    const FbxLayerElement::EMappingMode mappingMode = element->GetMappingMode();
+    if (mappingMode == FbxLayerElement::eByControlPoint)
+    {
+        if (element->GetDirectArray().GetCount() != vertexCount)
+        {
+            return;
+        }
+
+        for (int f = 0; f < indexCount; f++)
+        {
+            int index = (element->GetReferenceMode() == FbxGeometryElement::eDirect)
+                ? indices[f]
+                : element->GetIndexArray().GetAt(indices[f]);
+            output[f] = FBXToGLMType(element->GetDirectArray().GetAt(index));
+        }
+    }
+    else if (mappingMode == FbxLayerElement::eByPolygonVertex)
+    {
+        for (int f = 0; f < indexCount; ++f)
+        {
+            int index = (element->GetReferenceMode() == FbxGeometryElement::eDirect)
+                ? indices[f]
+                : element->GetIndexArray().GetAt(indices[f]);
+            output[f] = FBXToGLMType(element->GetDirectArray().GetAt(index));
+        }
+    }
+    else if (mappingMode == FbxLayerElement::eByPolygon)
+    {
+        int wedgeIndex = 0;
+        for (int f = 0; f < polygonCount; f++)
+        {
+            for (uint32_t e = 0; e < polygonSizes[f]; e++, wedgeIndex++)
+            {
+                int index = (element->GetReferenceMode() == FbxGeometryElement::eDirect)
+                    ? indices[f]
+                    : element->GetIndexArray().GetAt(indices[f]);
+                output[wedgeIndex] = FBXToGLMType(element->GetDirectArray().GetAt(index));
+            }
+        }
+    }
+    else if (mappingMode == FbxLayerElement::eAllSame)
+    {
+        int index = (element->GetReferenceMode() == FbxGeometryElement::eDirect)
+            ? indices[0]
+            : element->GetIndexArray().GetAt(indices[0]);
+        T2 value = FBXToGLMType(element->GetDirectArray().GetAt(index));
+        for (int f = 0; f < indexCount; f++)
+            output[f] = value;
+    }
+    else
+    {
+        throw std::runtime_error("Unsupported wedge mapping mode type.");
+    }
+}
+
+
 /*
     fbx node
 */
@@ -52,6 +140,8 @@ struct Texture
     vk::DescriptorImageInfo descriptor;
     vk::raii::Sampler sampler = nullptr;
     std::string format;
+    std::string path;
+    std::string name;
     void updateDescriptor();
     void loadImage(std::string_view path, VulkanDevice* device, const vk::raii::Queue& queue);
 };
@@ -76,7 +166,7 @@ constexpr uint8_t MAX_UV_SETS = 8;
 struct Vertex {
     glm::vec3 pos;
     glm::vec3 normal;
-    glm::vec2 uv[MAX_UV_SETS];
+    glm::vec2 uvs[MAX_UV_SETS];
     glm::vec4 color;
     //glm::vec4 joint0;
     //glm::vec4 weight0;
@@ -98,7 +188,7 @@ struct Primitive {
         float radius;
     } dimensions;
 
-    void setDimensions(glm::vec3 min, glm::vec3 max);
+    void SetDimensions(glm::vec3 min, glm::vec3 max);
     Primitive(uint32_t firstIndex, uint32_t indexCount, size_t materialIndex) : firstIndex(firstIndex), indexCount(indexCount), materialIndex(materialIndex) {};
 };
 
@@ -109,10 +199,10 @@ struct Mesh
     std::string name;
 
     struct UniformBuffer {
-        vk::raii::Buffer buffer;
-        vk::raii::DeviceMemory memory;
+        vk::raii::Buffer buffer = nullptr;
+        vk::raii::DeviceMemory memory = nullptr;
         vk::DescriptorBufferInfo descriptor;
-        vk::raii::DescriptorSet descriptorSet = VK_NULL_HANDLE;
+        vk::raii::DescriptorSet descriptorSet = nullptr;
         void* mapped;
     } uniformBuffer;
 
@@ -141,14 +231,14 @@ struct Node
     std::vector<size_t> childIndices;
     glm::mat4 matrix;
     std::string name;
-    Mesh mesh;
+    Mesh* mesh = nullptr;
     size_t skinIndex;
     glm::vec3 translation{};
     glm::vec3 scale{ 1.0f };
     glm::quat rotation{};
-    glm::mat4 localMatrix();
-    glm::mat4 getMatrix();
-    void update();
+    glm::mat4 LocalMatrix();
+    glm::mat4 GetMatrix();
+    void Update();
     ~Node();
 };
 
@@ -250,4 +340,6 @@ public:
         {FbxSurfaceMaterial::sTransparentColor, "Opacity"},
         {FbxSurfaceMaterial::sTransparencyFactor, "OpacityMask"}
     };
+private:
+    bool flipV = true;
 };

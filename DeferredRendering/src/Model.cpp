@@ -16,6 +16,7 @@ static std::string getExtension(const std::string& path) {
     return toLower(path.substr(p + 1));
 }
 
+
 void Texture::loadImage(std::string_view path, VulkanDevice* device, const vk::raii::Queue &queue)
 {
     this->deviceVK = device;
@@ -177,6 +178,40 @@ void Texture::updateDescriptor()
     descriptor.imageLayout = imageLayout;
 }
 
+
+void Primitive::SetDimensions(glm::vec3 min, glm::vec3 max)
+{
+}
+
+
+Mesh::Mesh(VulkanDevice *deviceVK, glm::mat4 matrix)
+{
+}
+
+Mesh::~Mesh()
+{
+}
+
+
+glm::mat4 Node::LocalMatrix()
+{
+    return glm::mat4();
+}
+
+glm::mat4 Node::GetMatrix()
+{
+    return glm::mat4();
+}
+
+void Node::Update()
+{
+}
+
+Node::~Node()
+{
+}
+
+
 bool Model::loadFromFile(std::string filename, VulkanDevice* device, const vk::raii::Queue &transferQueue, FileLoadingFlags fileLoadingFlags, float scale)
 {
     this->deviceVK = device;
@@ -234,7 +269,7 @@ bool Model::loadFromFile(std::string filename, VulkanDevice* device, const vk::r
 
     std::function<void(FbxNode*)> collectNodes = [&](FbxNode* n) {
         nodes.push_back(n);
-        for (int i = 0; i < n->GetChildCount(); ++i)
+        for (size_t i = 0; i < n->GetChildCount(); ++i)
             collectNodes(n->GetChild(i));
         };
     collectNodes(root);
@@ -244,6 +279,8 @@ bool Model::loadFromFile(std::string filename, VulkanDevice* device, const vk::r
         loadMaterials(node, transferQueue);
     }
 
+    loadNodeRecursively(root);
+
     return false;
 }
 
@@ -251,12 +288,12 @@ void Model::loadMaterials(FbxNode* node, const vk::raii::Queue& transferQueue)
 {
     if (!node) return;
     int matCount = node->GetMaterialCount();
-    for (int mi = 0; mi < matCount; ++mi)
+    for (size_t mi = 0; mi < matCount; ++mi)
     {
         FbxSurfaceMaterial* mat = node->GetMaterial(mi);
         if (!mat) continue;
 
-        Material material(deviceVK);
+        auto& material = materialLookup.emplace_back(deviceVK);
         FbxProperty currentProperty = mat->GetFirstProperty();
         while (currentProperty.IsValid())
         {
@@ -264,17 +301,38 @@ void Model::loadMaterials(FbxNode* node, const vk::raii::Queue& transferQueue)
 
             if (const auto& iter = FBXPropertyToNew.find(pFBXPropertyName); iter != FBXPropertyToNew.cend())
             {
-                Texture texture;
-                texture.loadImage(path, deviceVK, transferQueue);
-                texture.index = static_cast<uint32_t>(textureLookup.size());
-                textureLookup.push_back(std::move(texture));
+                FbxFileTexture* resTexture = nullptr;
 
-                material.textureMap[iter->second] = texture.index;
-                materialLookup.push_back(material);
-            }
-            else
-            {
-                throw std::runtime_error(std::format("Can not find material: {0}", pFBXPropertyName));
+                const int lLayeredTextureCount = currentProperty.GetSrcObjectCount<FbxLayeredTexture>();
+                if (lLayeredTextureCount > 0)
+                {
+                    FbxLayeredTexture* lLayeredTexture = currentProperty.GetSrcObject<FbxLayeredTexture>();
+
+                    const int lNbTextures = lLayeredTexture->GetSrcObjectCount<FbxFileTexture>();
+                    if (lNbTextures > 0)
+                    {
+                        resTexture = lLayeredTexture->GetSrcObject<FbxFileTexture>();
+                    }
+                }
+                else
+                {
+                    //Get first texture connected to property. Anyway, there shouldn't be more than one.
+                    FbxFileTexture* lTexture = currentProperty.GetSrcObject<FbxFileTexture>();
+                    if (lTexture)
+                        resTexture = lTexture;
+                }
+
+                if (resTexture != nullptr)
+                {
+                    Texture& texture = textureLookup.emplace_back();
+                    texture.path = resTexture->GetFileName();
+                    texture.name = resTexture->GetRelativeFileName();
+                    //todo: prepare vk context
+                    //texture.loadImage(texture.path, deviceVK, transferQueue);
+                    texture.index = static_cast<uint32_t>(textureLookup.size());
+
+                    material.textureMap[iter->second] = texture.index;
+                }
             }
 
             currentProperty = mat->GetNextProperty(currentProperty);
@@ -282,56 +340,125 @@ void Model::loadMaterials(FbxNode* node, const vk::raii::Queue& transferQueue)
     }
 }
 
-void Model::loadNodeRecursively(FbxNode* node)
+void Model::loadNodeRecursively(FbxNode* fbxNode)
 {
-    
-    const auto* pNodeAttribute = node->GetNodeAttribute();
+    const auto* pNodeAttribute = fbxNode->GetNodeAttribute();
 
     if (pNodeAttribute && pNodeAttribute->GetAttributeType() == FbxNodeAttribute::eMesh)
     {
-        std::string name = node->GetName();
+        auto& node = nodeLookup.emplace_back();
+        node.name = fbxNode->GetName();
 
+        FbxMesh* mesh = fbxNode->GetMesh();
+        // Control points = positions
+        FbxVector4* controlPoints = mesh->GetControlPoints();
+        const int polygonCount = mesh->GetPolygonCount();
+        const int vertexCount = mesh->GetControlPointsCount();
+
+        size_t beginIndex = vertexLookup.size();
+        vertexLookup.resize(beginIndex + polygonCount * 3);
+
+        std::vector<uint32_t> polygonSizes(polygonCount, 0);
+        int polygonIndexCount = 0;
+        for (size_t p = 0; p < polygonCount; ++p)
+        {
+            // Expect polySize = 3
+            const int polySize = mesh->GetPolygonSize(p);
+            polygonSizes[p] = polySize;
+            for (size_t v = 0; v < polySize; ++v)
+            {
+                // Position
+                const int controlPointIndex = mesh->GetPolygonVertex(p, v);
+                auto& vert = vertexLookup[beginIndex + polygonIndexCount + v];
+                FbxVector4 cp = controlPoints[controlPointIndex];
+                vert.pos = glm::vec3(static_cast<float>(cp[0]), static_cast<float>(cp[1]), static_cast<float>(cp[2]));
+            }
+            polygonIndexCount += polySize;
+        }
+
+        auto* const mainLayer = mesh->GetLayer(0);
+        const int* indices = mesh->GetPolygonVertices();
+
+        // Normal
+        auto* fbxNorms = mainLayer->GetNormals();
+        std::vector<glm::vec3> norms(polygonIndexCount, glm::zero<glm::vec3>());
+        GetFBXAttributeValue(fbxNorms, norms, indices, polygonIndexCount, polygonSizes, polygonCount, vertexCount, glm::zero<glm::vec3>());
+        
+        for (size_t i = 0; i < polygonCount; ++i)
+        {
+            auto& vert = vertexLookup[beginIndex + i];
+            vert.normal = norms[i];
+        }
+
+        // Tangent
+        // TBN = [T, cross(N, T)*sign, N]
+        //todo: warning or calculate
+        std::vector<glm::vec3> tangents(polygonIndexCount, glm::zero<glm::vec3>());
+        std::vector<glm::vec3> binormals(polygonIndexCount, glm::zero<glm::vec3>());
+        auto* fbxTangents = mainLayer->GetTangents();
+        auto* fbxBinormals = mainLayer->GetBinormals();
+        if (fbxTangents && fbxBinormals)
+        {
+            GetFBXAttributeValue(fbxTangents, tangents, indices, polygonIndexCount, polygonSizes, polygonCount, vertexCount, glm::zero<glm::vec3>());
+            GetFBXAttributeValue(fbxBinormals, binormals, indices, polygonIndexCount, polygonSizes, polygonCount, vertexCount, glm::zero<glm::vec3>());
+            for (size_t i = 0; i < tangents.size(); ++i)
+            {
+                const auto tangent = tangents[i];
+                auto binormal = glm::cross(norms[i], tangent);
+                float sign = glm::dot(binormal, binormals[i]);
+
+                auto& vert = vertexLookup[beginIndex + i];
+                vert.tangent = glm::vec4(tangent, sign > 0 ? 1.f : -1.f);
+            }
+        }
+
+        // UV
+        std::vector<glm::vec2> uvs[MAX_UV_SETS];
+        int uvsetIndex = 0;
+        for (size_t i = 0; i < mesh->GetLayerCount(); i++)
+        {
+            FbxLayer* fbxLayer = mesh->GetLayer(i);
+            if (!fbxLayer)
+                continue;
+            FbxLayerElementUV* fbxUVs = fbxLayer->GetUVs();
+            if (!fbxUVs)
+                continue;
+        
+            uvs[uvsetIndex].resize(polygonIndexCount);
+            GetFBXAttributeValue(fbxUVs, uvs[uvsetIndex], indices, polygonIndexCount, polygonSizes, polygonCount, vertexCount, glm::zero<glm::vec2>());
+            for (size_t j = 0; j < polygonCount; ++j)
+            {
+                auto& vert = vertexLookup[beginIndex + i];
+                vert.uvs[uvsetIndex] = uvs[uvsetIndex][j];
+                if (flipV)
+                {
+                    vert.uvs[uvsetIndex].y = 1.0f - vert.uvs[uvsetIndex].y;
+                }
+            }
+
+            uvsetIndex++;
+            if (uvsetIndex == MAX_UV_SETS)
+                break;
+        }
+
+        // Vertex Color
+        auto* fbxVertexColors = mainLayer->GetVertexColors();
+        if (fbxVertexColors)
+        {
+            std::vector<glm::vec4> vertexColors(polygonIndexCount, glm::zero<glm::vec4>());
+            GetFBXAttributeValue(fbxVertexColors, vertexColors, indices, polygonIndexCount, polygonSizes, polygonCount, vertexCount, glm::zero<glm::vec4>());
+            for (size_t i = 0; i < polygonCount; ++i)
+            {
+                auto& vert = vertexLookup[beginIndex + i];
+                vert.color = vertexColors[i];
+            }
+        }
+    }
+    else
+    {
+        for (size_t i = 0; i < fbxNode->GetChildCount(); ++i)
+        {
+            loadNodeRecursively(fbxNode->GetChild(i));
+        }
     }
 }
-
-//template<typename T1, typename T2>
-//static void GetFBXAttributeValue(const FbxLayerElementTemplate<T1>* element, std::vector<T2>& output, const int* indices, const int indexCount, const int vertexCount, const T2& defaultValue)
-//{
-//    output.resize(indexCount, defaultValue);
-//
-//    const FbxLayerElement::EMappingMode mappingMode = element->GetMappingMode();
-//    if (mappingMode == FbxLayerElement::eByControlPoint)
-//    {
-//        if (element->GetDirectArray().GetCount() != vertexCount)
-//        {
-//            return;
-//        }
-//
-//        for (int f = 0; f < indexCount; f++)
-//        {
-//            int index = (element->GetReferenceMode() == FbxGeometryElement::eDirect)
-//                ? indices[f]
-//                : element->GetIndexArray().GetAt(indices[f]);
-//            output[f] = uvElement->GetDirectArray().GetAt(index);
-//        }
-//    }
-//    else if (mappingMode == FbxLayerElement::eByPolygonVertex)
-//    {
-//        for (int f = 0; f < indexCount; ++f)
-//        {
-//            int index = (element->GetReferenceMode() == FbxGeometryElement::eDirect)
-//                ? indices[f]
-//                : element->GetIndexArray().GetAt(indices[f]);
-//            output[f] = uvElement->GetDirectArray().GetAt(index);
-//        }
-//    }
-//    else if (mappingMode == FbxLayerElement::eByPolygon)
-//    {   
-//    }
-//    else if (mappingMode == FbxLayerElement::eAllSame)
-//    {
-//    }
-//    else
-//    {
-//    }
-//}
