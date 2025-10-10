@@ -112,7 +112,7 @@ void VulkanApp::createSwapChain()
     swapChainImages = swapChain.getImages();
 }
 
-void VulkanApp::createImageViews()
+void VulkanApp::createSwapChainImageViews()
 {
     vk::ImageViewCreateInfo imageViewCreateInfo{ .viewType = vk::ImageViewType::e2D, .format = swapChainImageFormat,
           .subresourceRange = { vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1 } };
@@ -142,30 +142,28 @@ void VulkanApp::initWindow()
 
 void VulkanApp::initVulkan()
 {
-    // createInstance();
-    // setupDebugMessenger();
-    // createSurface();
-    // pickPhysicalDevice();
-    // createLogicalDevice();
-    // createSwapChain();
-    // createImageViews();
-    // createRenderPass();
-    // createDescriptorSetLayout();
-    // createGraphicPipeline();
-    // createCommandPool();
-    // createDepthResources();
-    // createFramebuffers();
-    // createTextureImage();
-    // createTextureImageView();
-    // createTextureSampler();
+    createInstance();
+    setupDebugMessenger();
+
+    createSurface();
+    createCommandPool();
+    createCommandBuffers();
+    createSyncObjects();
+    createDepthResources();
+    pickPhysicalDevice();
+    createLogicalDevice();
+    createSwapChain();
+    createSwapChainImageViews();
+    createRenderPass();
+    //todo: Pipline Cache
+    //todo: imgui overlay
+    createFramebuffers();
+
     loadModel();
-    // createVertexBuffer();
-    // createIndexBuffer();
-    // createUniformBuffers();
-    // createDescriptorPool();
-    // createDescriptorSets();
-    // createCommandBuffers();
-    // createSyncObjects();
+    createOffScreenFramebuffer();
+    createUniformBuffers();
+    createDescriptors();
+    createGraphicPipeline();
 }
 
 void VulkanApp::mainLoop()
@@ -239,7 +237,7 @@ void VulkanApp::createInstance()
             .ppEnabledLayerNames = requiredLayers.data(),
             .enabledExtensionCount = static_cast<uint32_t>(requiredExtensions.size()),
             .ppEnabledExtensionNames = requiredExtensions.data() };
-    instance = vk::raii::Instance(context, createInfo);
+    instance = context.createInstance(createInfo);
 }
 
 void VulkanApp::setupDebugMessenger() {
@@ -335,7 +333,7 @@ void VulkanApp::pickPhysicalDevice()
         });
     if (devIter != devices.end())
     {
-        deviceVK = new VulkanDevice(std::move(*devIter));
+        deviceVK = std::make_unique<VulkanDevice>(std::move(*devIter));
     }
     else
     {
@@ -876,7 +874,7 @@ void VulkanApp::recreateSwapChain()
 
     cleanupSwapChain();
     createSwapChain();
-    createImageViews();
+    createSwapChainImageViews();
     createDepthResources();
     createFramebuffers();
 }
@@ -893,13 +891,6 @@ void VulkanApp::cleanupSwapChain()
 }
 
 
-/*
-    Buffers in Vulkan are regions of memory used for storing arbitrary data that can be read by the graphics card. 
-*/
-void VulkanApp::createVertexBuffer()
-{
-}
-
 void VulkanApp::copyBuffer(vk::raii::Buffer& srcBuffer, vk::raii::Buffer& dstBuffer, vk::DeviceSize size)
 {
     auto commandCopyBuffer = deviceVK->beginSingleTimeCommands();
@@ -907,9 +898,6 @@ void VulkanApp::copyBuffer(vk::raii::Buffer& srcBuffer, vk::raii::Buffer& dstBuf
     deviceVK->endSingleTimeCommands(*commandCopyBuffer, queue);
 }
 
-void VulkanApp::createIndexBuffer()
-{
-}
 
 void VulkanApp::createUniformBuffers()
 {
@@ -937,6 +925,37 @@ void VulkanApp::updateUniformBuffer(uint32_t currentFrame)
     uniformDataOffscreen.view = glm::lookAt(glm::vec3(2.15f, 0.3f, -8.75f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
     uniformDataOffscreen.model = glm::mat4(1.0f);
     memcpy(uniformBuffers[currentFrame].offscreen.uniformBuffersMapped, &uniformDataOffscreen, sizeof(UniformDataOffscreen));
+}
+
+void VulkanApp::createDescriptors()
+{
+    createDescriptorPool();
+    createDescriptorSetLayout();
+    createDescriptorSets();
+}
+
+void VulkanApp::createDescriptorPool()
+{
+    std::array poolSizes{
+        vk::DescriptorPoolSize{
+            .type = vk::DescriptorType::eUniformBuffer,
+            // todo: Why 8?
+            .descriptorCount = MAX_FRAMES_IN_FLIGHT * 8
+        },
+        vk::DescriptorPoolSize{
+            .type = vk::DescriptorType::eCombinedImageSampler,
+            // todo: Why 9?
+            .descriptorCount = MAX_FRAMES_IN_FLIGHT * 9
+        }
+    };
+    vk::DescriptorPoolCreateInfo poolInfo{
+        .flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
+        // Deferred composition: 1 + Offscreen (scene): 2 = 3
+        .maxSets = MAX_FRAMES_IN_FLIGHT * 3,
+        .poolSizeCount = static_cast<uint32_t>(poolSizes.size()),
+        .pPoolSizes = poolSizes.data()
+    };
+    descriptorPool = deviceVK->logicDevice.createDescriptorPool(poolInfo);
 }
 
 /*
@@ -1020,31 +1039,7 @@ void VulkanApp::createDescriptorSetLayout()
         .bindingCount = static_cast<uint32_t>(bindings.size()),
         .pBindings = bindings.data()
     };
-    descriptorSetLayout = vk::raii::DescriptorSetLayout(deviceVK->logicDevice, layoutInfo);
-}
-
-void VulkanApp::createDescriptorPool()
-{
-    std::array poolSizes{
-        vk::DescriptorPoolSize{
-            .type = vk::DescriptorType::eUniformBuffer,
-            // Q: Why 8?
-            .descriptorCount = MAX_FRAMES_IN_FLIGHT * 8
-        },
-        vk::DescriptorPoolSize{
-            .type = vk::DescriptorType::eCombinedImageSampler,
-            // Q: Why 9?
-            .descriptorCount = MAX_FRAMES_IN_FLIGHT * 9
-        }
-    };
-    vk::DescriptorPoolCreateInfo poolInfo{
-        .flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
-        // Deferred composition: 1 + Offscreen (scene): 2 = 3
-        .maxSets = MAX_FRAMES_IN_FLIGHT * 3,
-        .poolSizeCount = static_cast<uint32_t>(poolSizes.size()),
-        .pPoolSizes = poolSizes.data()
-    };
-    descriptorPool = vk::raii::DescriptorPool(deviceVK->logicDevice, poolInfo);
+    descriptorSetLayout = deviceVK->logicDevice.createDescriptorSetLayout(layoutInfo);
 }
 
 void VulkanApp::createDescriptorSets()
@@ -1153,73 +1148,6 @@ void VulkanApp::createDescriptorSets()
     }
 }
 
-// todo: Try to experiment with this by creating a setupCommandBuffer that the helper functions record commands into, and add a flushSetupCommands to execute the commands that have been recorded so far. 
-// It’s best to do this after the texture mapping works to check if the texture resources are still set up correctly.
-void VulkanApp::createTextureImage()
-{
-    int texWidth, texHeight, texChannels;
-    std::string texturePath = ASSETS_SRC_DIR "/Model/kris-light-world-form-deltarune/textures/krish_light_form_text.png";
-    stbi_uc* pixels = stbi_load(texturePath.c_str(), &texWidth, &texHeight, &texChannels,
-        // The STBI_rgb_alpha value forces the image to be loaded with an alpha channel, even if it doesn’t have one
-        STBI_rgb_alpha);
-    vk::DeviceSize imageSize = texWidth * texHeight * 4;
-
-    if (!pixels)
-        throw std::runtime_error("failed to load texture image!");
-    
-    vk::raii::Buffer stagingBuffer = nullptr;
-    vk::raii::DeviceMemory stagingBufferMemory = nullptr;
-    deviceVK->CreateBuffer(imageSize, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, stagingBuffer, stagingBufferMemory);
-    void* dataStaging = stagingBufferMemory.mapMemory(0, imageSize);
-    memcpy(dataStaging, pixels, imageSize);
-    stagingBufferMemory.unmapMemory();
-
-    stbi_image_free(pixels);
-
-    deviceVK->CreateImage(texWidth, texHeight, vk::Format::eR8G8B8A8Srgb, 1, vk::ImageTiling::eOptimal, vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled, vk::MemoryPropertyFlagBits::eDeviceLocal, textureImage, textureImageMemory);
-
-    deviceVK->transitionImageLayout(textureImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal, queue);
-    deviceVK->copyBufferToImage(stagingBuffer, textureImage, static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight), queue);
-    deviceVK->transitionImageLayout(textureImage, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, queue);
-}
-
-void VulkanApp::createTextureImageView()
-{
-    textureImageView = createImageView(textureImage, vk::Format::eR8G8B8A8Srgb, vk::ImageAspectFlagBits::eColor);
-}
-
-vk::raii::ImageView VulkanApp::createImageView(vk::raii::Image& image, vk::Format format, vk::ImageAspectFlags aspectFlags)
-{
-    /*
-        createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
-        createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
-        createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
-        createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
-
-        Each component (r, g, b, a) in the components field specifies the mapping method of the image color channel.
-        VK_COMPONENT_SWIZZLE_IDENTITY indicates no swapping, that is, the red channel remains red, the green channel remains green, and so on.
-        Vulkan allows the order of image channels to be adjusted through component swapping (Swizzle) without modifying the image data itself. This is very useful in the following scenarios:
-            Format mismatch: When the image format does not match the channel order expected by the shader (for example, the image is stored as BGR, but the shader expects RGB).
-            Monochrome channel: Map multiple channels to the same value (for example, set the Alpha channel as the red channel).
-            Simplify data processing: Avoid preprocessing image data on the CPU side.
-    */
-
-    vk::ImageViewCreateInfo viewInfo{
-        .image = image,
-        .viewType = vk::ImageViewType::e2D,
-        .format = format,
-        .subresourceRange = {
-            .aspectMask = aspectFlags,
-            .baseMipLevel = 0,
-            .levelCount = 1,
-            .baseArrayLayer = 0,
-            .layerCount = 1
-        }
-    };
-
-    return vk::raii::ImageView(deviceVK->logicDevice, viewInfo);
-}
-
 void VulkanApp::createTextureSampler()
 {
     vk::PhysicalDeviceProperties properties = deviceVK->physicalDevice.getProperties();
@@ -1271,7 +1199,7 @@ void VulkanApp::createDepthResources()
     vk::Format depthFormat = findDepthFormat();
 
     deviceVK->CreateImage(swapChainExtent.width, swapChainExtent.height, depthFormat, 1, vk::ImageTiling::eOptimal, vk::ImageUsageFlagBits::eDepthStencilAttachment, vk::MemoryPropertyFlagBits::eDeviceLocal, depthImage, depthImageMemory);
-    depthImageView = createImageView(depthImage, depthFormat, vk::ImageAspectFlagBits::eDepth);
+    depthImageView = deviceVK->CreateImageView(depthImage, depthFormat, vk::ImageAspectFlagBits::eDepth);
 }
 
 vk::Format VulkanApp::findSupportedFormat(const std::vector<vk::Format>& candidates, vk::ImageTiling tiling, vk::FormatFeatureFlags features)
@@ -1308,7 +1236,7 @@ bool VulkanApp::loadModel()
 {
     bool flipV = true;
 
-    models.model.loadFromFile(ASSETS_SRC_DIR "/Model/scifipistol/SciFiPistol.fbx", deviceVK, queue, FileLoadingFlags::PreTransformVertices | FileLoadingFlags::PreMultiplyVertexColors | FileLoadingFlags::FlipY);
+    models.model.loadFromFile(ASSETS_SRC_DIR "/Model/scifipistol/SciFiPistol.fbx", deviceVK.get(), queue, FileLoadingFlags::PreTransformVertices | FileLoadingFlags::PreMultiplyVertexColors | FileLoadingFlags::FlipY);
 
     return true;
 }
@@ -1429,7 +1357,7 @@ void VulkanApp::createFramebuffers()
     }
 }
 
-void VulkanApp::createoffScreenFramebuffer()
+void VulkanApp::createOffScreenFramebuffer()
 {
     /*
         The compromise between "picture quality/performance/compatibility" and the specific application requirements (shadow map, off-screen post-processing, texture mapping, etc.)

@@ -114,6 +114,38 @@ void VulkanDevice::CreateImage(uint32_t width, uint32_t height, vk::Format forma
     image.bindMemory(imageMemory, 0);
 }
 
+vk::raii::ImageView VulkanDevice::CreateImageView(vk::raii::Image& image, vk::Format format, vk::ImageAspectFlags aspectFlags) const
+{
+    /*
+        createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+        createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+        createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+        createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+
+        Each component (r, g, b, a) in the components field specifies the mapping method of the image color channel.
+        VK_COMPONENT_SWIZZLE_IDENTITY indicates no swapping, that is, the red channel remains red, the green channel remains green, and so on.
+        Vulkan allows the order of image channels to be adjusted through component swapping (Swizzle) without modifying the image data itself. This is very useful in the following scenarios:
+            Format mismatch: When the image format does not match the channel order expected by the shader (for example, the image is stored as BGR, but the shader expects RGB).
+            Monochrome channel: Map multiple channels to the same value (for example, set the Alpha channel as the red channel).
+            Simplify data processing: Avoid preprocessing image data on the CPU side.
+    */
+
+    vk::ImageViewCreateInfo viewInfo{
+        .image = image,
+        .viewType = vk::ImageViewType::e2D,
+        .format = format,
+        .subresourceRange = {
+            .aspectMask = aspectFlags,
+            .baseMipLevel = 0,
+            .levelCount = 1,
+            .baseArrayLayer = 0,
+            .layerCount = 1
+        }
+    };
+
+    return logicDevice.createImageView(viewInfo);
+}
+
 std::unique_ptr<vk::raii::CommandBuffer> VulkanDevice::beginSingleTimeCommands()
 {
     vk::CommandBufferAllocateInfo allocInfo{

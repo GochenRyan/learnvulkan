@@ -69,71 +69,53 @@ private:
     void initWindow();
     void initVulkan();
     void mainLoop();
-    void createInstance();
-    void cleanup();
-    bool checkValidationLayerSupport();
-    std::vector<const char*> getRequiredExtensions();
-    void setupDebugMessenger();
-
-    void pickPhysicalDevice();
-
-    void createLogicalDevice();
-
-    void createSurface();
-
-    vk::Extent2D chooseSwapExtent(const vk::SurfaceCapabilitiesKHR& capabilities);
-    void createSwapChain();
-
-    void createImageViews();
-
-    void createGraphicPipeline();
-
-    std::vector<char> readFile(std::string_view filePath);
-    [[nodiscard]] vk::raii::ShaderModule createShaderModule(const std::vector<char>& code) const;
-
-    void createCommandPool();
-    void createCommandBuffers();
-    void recordCommandBuffer(uint32_t imageIndex);
-    void transition_image_layout(uint32_t imageIndex, vk::ImageLayout oldLayout, vk::ImageLayout newLayout, vk::AccessFlags2 srcAccessMask, vk::AccessFlags2 dstAccessMask, vk::PipelineStageFlags2 srcStageMask, vk::PipelineStageFlags2 dstStageMask);
-
     void drawFrame();
-    void createSyncObjects();
-
+    void cleanup();
     void cleanupSwapChain();
     void recreateSwapChain();
+private:
+    void createInstance();
+    void setupDebugMessenger();
+    void createSurface();
+    void createCommandPool();
+    void createCommandBuffers();
+    void createSyncObjects();
+    void createDepthResources();
+    void pickPhysicalDevice();
+    void createLogicalDevice();
+    void createSwapChain();
+    void createSwapChainImageViews();
+    void createRenderPass();
+    void createFramebuffers();
+private:
+    bool loadModel();
+    void createOffScreenFramebuffer();
+    void createUniformBuffers();
+    void createDescriptors();
+    void createGraphicPipeline();
+private:
+    void recordCommandBuffer(uint32_t imageIndex);
 
-    /*
-        Vulkan Memory Management : https://developer.nvidia.com/vulkan-memory-management
-    */
-    void createVertexBuffer();
-    
+    void createDescriptorPool();
+    void createDescriptorSetLayout();
+    void createDescriptorSets();
+private:
+    /* helper */
+    bool checkValidationLayerSupport();
+    std::vector<const char*> getRequiredExtensions();
+    vk::Extent2D chooseSwapExtent(const vk::SurfaceCapabilitiesKHR& capabilities);
+    std::vector<char> readFile(std::string_view filePath);
+    [[nodiscard]] vk::raii::ShaderModule createShaderModule(const std::vector<char>& code) const;
+    void transition_image_layout(uint32_t imageIndex, vk::ImageLayout oldLayout, vk::ImageLayout newLayout, vk::AccessFlags2 srcAccessMask, vk::AccessFlags2 dstAccessMask, vk::PipelineStageFlags2 srcStageMask, vk::PipelineStageFlags2 dstStageMask);
     void copyBuffer(vk::raii::Buffer& srcBuffer, vk::raii::Buffer& dstBuffer, vk::DeviceSize size);
 
-    void createIndexBuffer();
-
-    void createDescriptorSetLayout();
-    void createUniformBuffers();
     void updateUniformBuffer(uint32_t currentImage);
-    void createDescriptorPool();
-    void createDescriptorSets();
-
-    void createTextureImage();
-    void createTextureImageView();
-    vk::raii::ImageView createImageView(vk::raii::Image& image, vk::Format format, vk::ImageAspectFlags aspectFlags);
+    
     void createTextureSampler();
-
-    void createDepthResources();
+    
     vk::Format findSupportedFormat(const std::vector<vk::Format>& candidates, vk::ImageTiling tiling, vk::FormatFeatureFlags features);
     vk::Format findDepthFormat();
     bool hasStencilComponent(vk::Format format);
-
-    bool loadModel();
-
-    /* Subpass */
-    void createRenderPass();
-    void createFramebuffers();
-    
-    void createoffScreenFramebuffer();
     void createAttachment(vk::Format format, vk::ImageUsageFlagBits usage, FramebufferAttachment* attachment);
 private:
     GLFWwindow* window{ nullptr };
@@ -178,9 +160,6 @@ private:
     std::vector<void*> uniformBuffersMapped;
     vk::raii::DescriptorPool descriptorPool = nullptr;
 
-    vk::raii::Image textureImage = nullptr;
-    vk::raii::DeviceMemory textureImageMemory = nullptr;
-    vk::raii::ImageView textureImageView = nullptr;
     vk::raii::Sampler textureSampler = nullptr;
 
     vk::raii::Image depthImage = nullptr;
@@ -236,7 +215,7 @@ private:
         Model Floor;
     } models;
 
-    VulkanDevice* deviceVK = nullptr;
+    std::unique_ptr<VulkanDevice> deviceVK = nullptr;
 public:
     /*
         Although many drivers and platforms trigger VK_ERROR_OUT_OF_DATE_KHR automatically after a window resize, it is not guaranteed to happen. 

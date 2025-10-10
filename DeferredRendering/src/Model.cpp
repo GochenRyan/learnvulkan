@@ -392,7 +392,6 @@ void Model::loadNodeRecursively(FbxNode* fbxNode)
 
         // Tangent
         // TBN = [T, cross(N, T)*sign, N]
-        //todo: warning or calculate
         std::vector<glm::vec3> tangents(polygonIndexCount, glm::zero<glm::vec3>());
         std::vector<glm::vec3> binormals(polygonIndexCount, glm::zero<glm::vec3>());
         auto* fbxTangents = mainLayer->GetTangents();

@@ -15,6 +15,7 @@ struct VulkanDevice
     uint32_t FindMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties);
     void CreateBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage, vk::MemoryPropertyFlags properties, vk::raii::Buffer& buffer, vk::raii::DeviceMemory& bufferMemory);
     void CreateImage(uint32_t width, uint32_t height, vk::Format format, uint32_t miplevels, vk::ImageTiling tiling, vk::ImageUsageFlags usage, vk::MemoryPropertyFlags properties, vk::raii::Image& image, vk::raii::DeviceMemory& imageMemory);
+    vk::raii::ImageView CreateImageView(vk::raii::Image& image, vk::Format format, vk::ImageAspectFlags aspectFlags) const;
     std::unique_ptr<vk::raii::CommandBuffer> beginSingleTimeCommands();
     void endSingleTimeCommands(vk::raii::CommandBuffer& commandBuffer, const vk::raii::Queue& queue);
     void transitionImageLayout(const vk::raii::Image& image, vk::ImageLayout oldLayout, vk::ImageLayout newLayout, const vk::raii::Queue& queue);
