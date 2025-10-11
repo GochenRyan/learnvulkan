@@ -146,12 +146,12 @@ void VulkanApp::initVulkan()
     setupDebugMessenger();
 
     createSurface();
+    pickPhysicalDevice();
+    createLogicalDevice();
     createCommandPool();
     createCommandBuffers();
     createSyncObjects();
     createDepthResources();
-    pickPhysicalDevice();
-    createLogicalDevice();
     createSwapChain();
     createSwapChainImageViews();
     createRenderPass();
@@ -542,16 +542,16 @@ void VulkanApp::createGraphicPipeline()
     // Final fullscreen composition pass pipeline
     pipelines.composition = deviceVK->logicDevice.createGraphicsPipeline(nullptr, pipelineCI);
 
-    // auto bindingDescription = Vertex::getBindingDescription();
-    // auto attributeDescriptions = Vertex::getAttributeDescriptions();
+    auto bindingDescription = Vertex::getBindingDescription();
+    auto attributeDescriptions = Vertex::getAttributeDescriptions();
     
-    // vk::PipelineVertexInputStateCreateInfo vertexInputCI{
-    //     .vertexBindingDescriptionCount = 1,
-    //     .pVertexBindingDescriptions = &bindingDescription,
-    //     .vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size()),
-    //     .pVertexAttributeDescriptions = attributeDescriptions.data()
-    // };
-    // pipelineCI.pVertexInputState = &vertexInputCI;
+    vk::PipelineVertexInputStateCreateInfo vertexInputCI{
+        .vertexBindingDescriptionCount = 1,
+        .pVertexBindingDescriptions = &bindingDescription,
+        .vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size()),
+        .pVertexAttributeDescriptions = attributeDescriptions.data()
+    };
+    pipelineCI.pVertexInputState = &vertexInputCI;
     rasterizerCI.cullMode = vk::CullModeFlagBits::eBack;
 
     // Offscreen pipeline
@@ -683,7 +683,7 @@ void VulkanApp::recordCommandBuffer(uint32_t imageIndex)
             0,
             *descriptorSets[currentFrame].floor,
             nullptr);
-        //models.floor.draw(cmdBuffer);
+        //models.Floor.draw(cmdBuffer);
     }
 }
 
@@ -820,8 +820,7 @@ void VulkanApp::drawFrame()
         .pImageIndices = &imageIndex
     };
 
-    // The vkQueuePresentKHR function submits the request to present an image to the swap chain. 
-    // The vkQueuePresentKHR function submits the request to present an image to the swap chain. 
+    // The vkQueuePresentKHR function submits the request to present an image to the swap chain.
     try
     {
         // presentKHR will throw on eErrorOutOfDateKHR
@@ -1044,108 +1043,109 @@ void VulkanApp::createDescriptorSetLayout()
 
 void VulkanApp::createDescriptorSets()
 {
-    std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, *descriptorSetLayout);
-    vk::DescriptorSetAllocateInfo allocInfo{
-        .descriptorPool = descriptorPool,
-        .descriptorSetCount = static_cast<uint32_t>(layouts.size()),
-        .pSetLayouts = layouts.data()
-    };
+    //std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, *descriptorSetLayout);
+    //vk::DescriptorSetAllocateInfo allocInfo{
+    //    .descriptorPool = descriptorPool,
+    //    .descriptorSetCount = static_cast<uint32_t>(layouts.size()),
+    //    .pSetLayouts = layouts.data()
+    //};
 
-    // Sets per frame, just like the buffers themselves
-    // Image descriptors for the offscreen color attachments
-    vk::DescriptorImageInfo descriptorPosition{
-        .sampler = colorSampler,
-        .imageView = offScreenFramebuffer.position.view,
-        .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal
-    };
-    vk::DescriptorImageInfo descriptorNormal{
-        .sampler = colorSampler,
-        .imageView = offScreenFramebuffer.normal.view,
-        .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal
-    };
-    vk::DescriptorImageInfo descriptorAlbedo{
-        .sampler = colorSampler,
-        .imageView = offScreenFramebuffer.albedo.view,
-        .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal
-    };
+    //// Sets per frame, just like the buffers themselves
+    //// Image descriptors for the offscreen color attachments
+    //vk::DescriptorImageInfo descriptorPosition{
+    //    .sampler = colorSampler,
+    //    .imageView = offScreenFramebuffer.position.view,
+    //    .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal
+    //};
+    //vk::DescriptorImageInfo descriptorNormal{
+    //    .sampler = colorSampler,
+    //    .imageView = offScreenFramebuffer.normal.view,
+    //    .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal
+    //};
+    //vk::DescriptorImageInfo descriptorAlbedo{
+    //    .sampler = colorSampler,
+    //    .imageView = offScreenFramebuffer.albedo.view,
+    //    .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal
+    //};
 
-    // Model
-    vk::DescriptorImageInfo modelDescriptorColorMap{
-        .sampler = textureSampler,
-        .imageView = offScreenFramebuffer.normal.view,
-        .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal
-    };
-    vk::DescriptorImageInfo modelDescriptorNormalMap{
-        .sampler = textureSampler,
-        .imageView = offScreenFramebuffer.normal.view,
-        .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal
-    };
+    ////// Model
+    ////vk::DescriptorImageInfo modelDescriptorColorMap{
+    ////    .sampler = textureSampler,
+    ////    .imageView = offScreenFramebuffer.normal.view,
+    ////    .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal
+    ////};
+    ////vk::DescriptorImageInfo modelDescriptorNormalMap{
+    ////    .sampler = textureSampler,
+    ////    .imageView = offScreenFramebuffer.normal.view,
+    ////    .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal
+    ////};
 
-    // Background
-    vk::DescriptorImageInfo bgDescriptorColorMap{
-        .sampler = textureSampler,
-        .imageView = offScreenFramebuffer.normal.view,
-        .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal
-    };
-    vk::DescriptorImageInfo bgDescriptorNormalMap{
-        .sampler = textureSampler,
-        .imageView = offScreenFramebuffer.normal.view,
-        .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal
-    };
+    ////// Background
+    ////vk::DescriptorImageInfo bgDescriptorColorMap{
+    ////    .sampler = textureSampler,
+    ////    .imageView = offScreenFramebuffer.normal.view,
+    ////    .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal
+    ////};
+    ////vk::DescriptorImageInfo bgDescriptorNormalMap{
+    ////    .sampler = textureSampler,
+    ////    .imageView = offScreenFramebuffer.normal.view,
+    ////    .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal
+    ////};
 
-    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
-    {
-        vk::DescriptorBufferInfo compositionBI{
-            .buffer = uniformBuffers[i].composition.uniformBuffer,
-            .offset = 0,
-            .range = sizeof(UniformDataComposition)
-        };
-        std::vector<vk::WriteDescriptorSet> writeDescriptorSets;
-        // Deferred composition
-        descriptorSets[i].composition = std::move(deviceVK->logicDevice.allocateDescriptorSets(allocInfo)[0]);
-        writeDescriptorSets = {
-            // Binding 1 : Position texture target
-            vk::WriteDescriptorSet{ .dstSet = descriptorSets[i].composition, .dstBinding = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &descriptorPosition},
-            // Binding 2 : Normals texture target
-            vk::WriteDescriptorSet{ .dstSet = descriptorSets[i].composition, .dstBinding = 2, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &descriptorNormal},
-            // Binding 3 : Albedo texture target
-            vk::WriteDescriptorSet{ .dstSet = descriptorSets[i].composition, .dstBinding = 3, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &descriptorAlbedo},
-            // Binding 4 : Fragment shader uniform buffer
-            vk::WriteDescriptorSet{ .dstSet = descriptorSets[i].composition, .dstBinding = 4, .descriptorType = vk::DescriptorType::eUniformBuffer, .pBufferInfo = &compositionBI}
-        };
-        deviceVK->logicDevice.updateDescriptorSets(writeDescriptorSets, {});
+    //auto sets = deviceVK->logicDevice.allocateDescriptorSets(allocInfo);
+    //for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
+    //{
+    //    vk::DescriptorBufferInfo compositionBI{
+    //        .buffer = uniformBuffers[i].composition.uniformBuffer,
+    //        .offset = 0,
+    //        .range = sizeof(UniformDataComposition)
+    //    };
+    //    std::vector<vk::WriteDescriptorSet> writeDescriptorSets;
+    //    // Deferred composition
+    //    descriptorSets[i].composition = std::move(sets[i]);
+    //    writeDescriptorSets = {
+    //        // Binding 1 : Position texture target
+    //        vk::WriteDescriptorSet{ .dstSet = descriptorSets[i].composition, .dstBinding = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &descriptorPosition},
+    //        // Binding 2 : Normals texture target
+    //        vk::WriteDescriptorSet{ .dstSet = descriptorSets[i].composition, .dstBinding = 2, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &descriptorNormal},
+    //        // Binding 3 : Albedo texture target
+    //        vk::WriteDescriptorSet{ .dstSet = descriptorSets[i].composition, .dstBinding = 3, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &descriptorAlbedo},
+    //        // Binding 4 : Fragment shader uniform buffer
+    //        vk::WriteDescriptorSet{ .dstSet = descriptorSets[i].composition, .dstBinding = 4, .descriptorType = vk::DescriptorType::eUniformBuffer, .pBufferInfo = &compositionBI}
+    //    };
+    //    deviceVK->logicDevice.updateDescriptorSets(writeDescriptorSets, {});
 
-        // Offscreen (scene)
-        
-        // Model
-        vk::DescriptorBufferInfo offscreenModelBI{
-            .buffer = uniformBuffers[i].offscreen.uniformBuffer,
-            .offset = 0,
-            .range = sizeof(UniformDataOffscreen)
-        };
-        descriptorSets[i].model = std::move(deviceVK->logicDevice.allocateDescriptorSets(allocInfo)[0]);
-        writeDescriptorSets = {
-            // Binding 0: Vertex shader uniform buffer
-            vk::WriteDescriptorSet{ .dstSet = descriptorSets[i].model, .dstBinding = 0, .descriptorType = vk::DescriptorType::eUniformBuffer, .pBufferInfo = &offscreenModelBI},
-            // Binding 1: Color map
-            vk::WriteDescriptorSet{.dstSet = descriptorSets[i].model, .dstBinding = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &modelDescriptorColorMap},
-            // Binding 2: Normal map
-            vk::WriteDescriptorSet{.dstSet = descriptorSets[i].model, .dstBinding = 2, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &modelDescriptorColorMap}
-        };
-        deviceVK->logicDevice.updateDescriptorSets(writeDescriptorSets, {});
+    //    // Offscreen (scene)
+    //    
+    //    // Model
+    //    vk::DescriptorBufferInfo offscreenModelBI{
+    //        .buffer = uniformBuffers[i].offscreen.uniformBuffer,
+    //        .offset = 0,
+    //        .range = sizeof(UniformDataOffscreen)
+    //    };
+    //    descriptorSets[i].model = std::move(deviceVK->logicDevice.allocateDescriptorSets(allocInfo)[0]);
+    //    writeDescriptorSets = {
+    //        // Binding 0: Vertex shader uniform buffer
+    //        vk::WriteDescriptorSet{ .dstSet = descriptorSets[i].model, .dstBinding = 0, .descriptorType = vk::DescriptorType::eUniformBuffer, .pBufferInfo = &offscreenModelBI},
+    //        // Binding 1: Color map
+    //        vk::WriteDescriptorSet{.dstSet = descriptorSets[i].model, .dstBinding = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &modelDescriptorColorMap},
+    //        // Binding 2: Normal map
+    //        vk::WriteDescriptorSet{.dstSet = descriptorSets[i].model, .dstBinding = 2, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &modelDescriptorColorMap}
+    //    };
+    //    deviceVK->logicDevice.updateDescriptorSets(writeDescriptorSets, {});
 
-        // Background
-        descriptorSets[i].floor = std::move(deviceVK->logicDevice.allocateDescriptorSets(allocInfo)[0]);
-        writeDescriptorSets = {
-            // Binding 0: Vertex shader uniform buffer
-            vk::WriteDescriptorSet{.dstSet = descriptorSets[i].floor, .dstBinding = 0, .descriptorType = vk::DescriptorType::eUniformBuffer, .pBufferInfo = &offscreenModelBI},
-            // Binding 1: Color map
-            vk::WriteDescriptorSet{.dstSet = descriptorSets[i].floor, .dstBinding = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &bgDescriptorColorMap},
-            // Binding 2: Normal map
-            vk::WriteDescriptorSet{.dstSet = descriptorSets[i].floor, .dstBinding = 2, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &bgDescriptorNormalMap}
-        };
-        deviceVK->logicDevice.updateDescriptorSets(writeDescriptorSets, {});
-    }
+    //    // Background
+    //    descriptorSets[i].floor = std::move(deviceVK->logicDevice.allocateDescriptorSets(allocInfo)[0]);
+    //    writeDescriptorSets = {
+    //        // Binding 0: Vertex shader uniform buffer
+    //        vk::WriteDescriptorSet{.dstSet = descriptorSets[i].floor, .dstBinding = 0, .descriptorType = vk::DescriptorType::eUniformBuffer, .pBufferInfo = &offscreenModelBI},
+    //        // Binding 1: Color map
+    //        vk::WriteDescriptorSet{.dstSet = descriptorSets[i].floor, .dstBinding = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &bgDescriptorColorMap},
+    //        // Binding 2: Normal map
+    //        vk::WriteDescriptorSet{.dstSet = descriptorSets[i].floor, .dstBinding = 2, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &bgDescriptorNormalMap}
+    //    };
+    //    deviceVK->logicDevice.updateDescriptorSets(writeDescriptorSets, {});
+    //}
 }
 
 void VulkanApp::createTextureSampler()

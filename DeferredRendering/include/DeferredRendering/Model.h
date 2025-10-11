@@ -10,7 +10,29 @@
 #include <glm/gtc/type_ptr.hpp>
 
 #include <vector>
+#include <set>
 #include <fbxsdk.h>
+
+enum class ShaderChannel : int8_t
+{
+    None = -1,
+    Position = 0,
+    Normal,
+    Tangent,
+    Color,
+    TexCoord0,
+    TexCoord1,
+    TexCoord2,
+    TexCoord3,
+    TexCoord4,
+    TexCoord5,
+    TexCoord6,
+    TexCoord7,
+    BlendWeights,
+    BlendIndices,
+
+    ChannelCount
+};
 
 enum class DescriptorBindingFlags { ImageBaseColor, ImageNormalMap };
 enum class AlphaMode { ALPHAMODE_OPAQUE, ALPHAMODE_MASK, ALPHAMODE_BLEND };
@@ -137,23 +159,32 @@ struct Texture
     uint32_t layerCount{};
     vk::ImageLayout imageLayout{};
     uint32_t index{};
-    vk::DescriptorImageInfo descriptor;
+    vk::DescriptorImageInfo descriptor{};
     vk::raii::Sampler sampler = nullptr;
-    std::string format;
+    vk::Format format{};
     std::string path;
     std::string name;
     void updateDescriptor();
     void loadImage(std::string_view path, VulkanDevice* device, const vk::raii::Queue& queue);
 };
 
+constexpr std::string_view EmissiveFactorString = "emissive";
+inline const std::set<std::string_view> FloatParamArray = {
+    EmissiveFactorString
+};
+
 struct Material
 {
     VulkanDevice* deviceVK = nullptr;
     AlphaMode alphaMode = AlphaMode::ALPHAMODE_OPAQUE;
-    float alphaCutoff = 1.0f;
-    float metallicFactor = 1.0f;
-    float roughnessFactor = 1.0f;
-    glm::vec4 baseColorFactor = glm::vec4(1.0f);
+    //float alphaCutoff = 1.0f;
+    //float metallicFactor = 1.0f;
+    //float roughnessFactor = 1.0f;
+    //glm::vec4 baseColorFactor = glm::vec4(1.0f);
+    std::unordered_map<std::string_view, float> FloatParamMap =
+    {
+        {EmissiveFactorString, 0.f},
+    };
     std::unordered_map<std::string, size_t> textureMap;
     vk::raii::DescriptorSet descriptorSet = nullptr;
 
@@ -166,11 +197,64 @@ constexpr uint8_t MAX_UV_SETS = 8;
 struct Vertex {
     glm::vec3 pos;
     glm::vec3 normal;
-    glm::vec2 uvs[MAX_UV_SETS];
+    glm::vec4 tangent;
     glm::vec4 color;
+    glm::vec2 uvs[MAX_UV_SETS];
     //glm::vec4 joint0;
     //glm::vec4 weight0;
-    glm::vec4 tangent;
+
+    /*
+        A vertex binding describes at which rate to load data from memory throughout the vertices.
+        It specifies the **number of bytes between data entries** and whether to move to the next data entry after each **vertex** or after each **instance**.
+    */
+    static vk::VertexInputBindingDescription getBindingDescription()
+    {
+        return {
+            // The binding parameter specifies the index of the binding in the array of bindings.
+            0,
+            // The stride parameter specifies the number of bytes from one entry to the next
+            sizeof(Vertex),
+            /*
+                The inputRate parameter can have one of the following values:
+                    VK_VERTEX_INPUT_RATE_VERTEX: Move to the next data entry after each vertex
+                    VK_VERTEX_INPUT_RATE_INSTANCE: Move to the next data entry after each instance
+            */
+            vk::VertexInputRate::eVertex };
+    }
+
+    static std::array<vk::VertexInputAttributeDescription, 12> getAttributeDescriptions()
+    {
+        /*
+            The **location** parameter references the location directive of the input in the vertex shader.
+            The **binding** parameter tells Vulkan from which binding the per-vertex data comes.
+            The **format** parameter describes the type of data for the attribute.
+                float: VK_FORMAT_R32_SFLOAT
+                float2: VK_FORMAT_R32G32_SFLOAT
+                float3: VK_FORMAT_R32G32B32_SFLOAT
+                float4: VK_FORMAT_R32G32B32A32_SFLOAT
+
+                int2: VK_FORMAT_R32G32_SINT, a 2-component vector of 32-bit signed integers
+                uint4: VK_FORMAT_R32G32B32A32_UINT, a 4-component vector of 32-bit unsigned integers
+                double: VK_FORMAT_R64_SFLOAT, a double-precision (64-bit) float
+            The **offset** parameter has specified the number of bytes since the start of the per-vertex data to read from. T
+        */
+
+        return {
+            vk::VertexInputAttributeDescription(0, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, pos)),
+            vk::VertexInputAttributeDescription(1, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, normal)),
+            vk::VertexInputAttributeDescription(2, 0, vk::Format::eR32G32B32A32Sfloat, offsetof(Vertex, tangent)),
+            vk::VertexInputAttributeDescription(3, 0, vk::Format::eR32G32B32A32Sfloat, offsetof(Vertex, color)),
+            // todo: optimize uvs
+            vk::VertexInputAttributeDescription(4, 0, vk::Format::eR32G32Sfloat, offsetof(Vertex, uvs[0])),
+            vk::VertexInputAttributeDescription(5, 0, vk::Format::eR32G32Sfloat, offsetof(Vertex, uvs[1])),
+            vk::VertexInputAttributeDescription(6, 0, vk::Format::eR32G32Sfloat, offsetof(Vertex, uvs[2])),
+            vk::VertexInputAttributeDescription(7, 0, vk::Format::eR32G32Sfloat, offsetof(Vertex, uvs[3])),
+            vk::VertexInputAttributeDescription(8, 0, vk::Format::eR32G32Sfloat, offsetof(Vertex, uvs[4])),
+            vk::VertexInputAttributeDescription(9, 0, vk::Format::eR32G32Sfloat, offsetof(Vertex, uvs[5])),
+            vk::VertexInputAttributeDescription(10, 0, vk::Format::eR32G32Sfloat, offsetof(Vertex, uvs[6])),
+            vk::VertexInputAttributeDescription(11, 0, vk::Format::eR32G32Sfloat, offsetof(Vertex, uvs[7]))
+        };
+    }
 };
 
 struct Primitive {
@@ -274,7 +358,7 @@ public:
     //void bindBuffers(vk::raii::CommandBuffer& commandBuffer);
     //void prepareNodeDescriptor(Node* node, vk::raii::DescriptorSetLayout& descriptorSetLayout);
     //void drawNode(Node* node, vk::raii::CommandBuffer& commandBuffer, uint32_t renderFlags = 0, const vk::raii::PipelineLayout& pipelineLayout = nullptr, uint32_t bindImageSet = 1);
-    //void draw(vk::raii::CommandBuffer& commandBuffer, uint32_t renderFlags = 0, const vk::raii::PipelineLayout& pipelineLayout = nullptr, uint32_t bindImageSet = 1);
+    void draw(vk::raii::CommandBuffer& commandBuffer, uint32_t renderFlags = 0, const vk::raii::PipelineLayout& pipelineLayout = nullptr, uint32_t bindImageSet = 1);
 
     //void getNodeDimensions(Node* node, glm::vec3& min, glm::vec3& max);
     //void getSceneDimensions();

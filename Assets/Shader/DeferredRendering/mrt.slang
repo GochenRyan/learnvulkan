@@ -8,10 +8,17 @@
 struct VSInput
 {
     float4 Pos;
-    float2 UV;
-    float3 Color;
     float3 Normal;
     float3 Tangent;
+    float3 Color;
+    float2 UV0;
+    float2 UV1;
+    float2 UV2;
+    float2 UV3;
+    float2 UV4;
+    float2 UV5;
+    float2 UV6;
+    float2 UV7;
 }
 
 struct VSOutput
@@ -51,7 +58,7 @@ VSOutput vertMain(VSInput input, uint InstanceIndex: SV_InstanceID)
 
     output.Pos = mul(ubo.projection, mul(ubo.view, mul(ubo.model, tmpPos)));
     
-    output.UV = input.UV;
+    output.UV = input.UV0;
 
     // Vertex position in world space
     output.WorldPos = mul(ubo.model, tmpPos).xyz;

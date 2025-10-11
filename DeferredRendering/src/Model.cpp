@@ -39,6 +39,9 @@ void Texture::loadImage(std::string_view path, VulkanDevice* device, const vk::r
         if (!pixels)
             throw std::runtime_error(std::format("failed to load texture image : {0}", path));
 
+        width = texWidth;
+        height = texHeight;
+
         vk::DeviceSize imageSize = texWidth * texHeight * 4;
         mipLevels = static_cast<uint32_t>(floor(log2(std::max(width, height))) + 1.0);
 
@@ -55,6 +58,8 @@ void Texture::loadImage(std::string_view path, VulkanDevice* device, const vk::r
         deviceVK->transitionImageLayout(image, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal, queue);
         deviceVK->copyBufferToImage(stagingBuffer, image, static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight), queue);
         deviceVK->transitionImageLayout(image, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eTransferSrcOptimal, queue);
+
+        layerCount = 1;
 
         // Generate the mip chain
         std::unique_ptr<vk::raii::CommandBuffer> blitCmd = deviceVK->beginSingleTimeCommands();
@@ -152,13 +157,15 @@ void Texture::loadImage(std::string_view path, VulkanDevice* device, const vk::r
     };
     sampler = deviceVK->logicDevice.createSampler(samplerCI);
 
+    format = vk::Format::eR8G8B8A8Srgb;
+
     vk::ImageViewCreateInfo viewCI{
         .image = image,
         .viewType = vk::ImageViewType::e2D,
         .format = vk::Format::eR8G8B8A8Srgb,
         .subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eColor, .levelCount = mipLevels, .layerCount = 1 }
     };
-    deviceVK->logicDevice.createImageView(viewCI);
+    view = deviceVK->logicDevice.createImageView(viewCI);
 
     imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
     descriptor.sampler = sampler;
@@ -328,11 +335,20 @@ void Model::loadMaterials(FbxNode* node, const vk::raii::Queue& transferQueue)
                     texture.path = resTexture->GetFileName();
                     texture.name = resTexture->GetRelativeFileName();
                     //todo: prepare vk context
-                    //texture.loadImage(texture.path, deviceVK, transferQueue);
+                    texture.loadImage(texture.path, deviceVK, transferQueue);
                     texture.index = static_cast<uint32_t>(textureLookup.size());
 
                     material.textureMap[iter->second] = texture.index;
                 }
+            }
+            else if (FloatParamArray.find(pFBXPropertyName) != FloatParamArray.cend())
+            {
+                double val = currentProperty.Get<double>();
+                material.FloatParamMap[pFBXPropertyName] = static_cast<float>(val);
+            }
+            else
+            {
+                //std::cout << std::format("missing property name : {0}", pFBXPropertyName) << std::endl;
             }
 
             currentProperty = mat->GetNextProperty(currentProperty);
