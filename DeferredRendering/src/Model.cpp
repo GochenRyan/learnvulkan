@@ -3,6 +3,7 @@
 #include <format>
 #include <iostream>
 #include <stb_image.h>
+#include <unordered_set>
 
 static std::string toLower(const std::string& s) {
     std::string r = s;
@@ -286,18 +287,18 @@ bool Model::loadFromFile(std::string filename, VulkanDevice* device, const vk::r
         loadMaterials(node, transferQueue);
     }
 
-    loadNodeRecursively(root);
+    loadNodeRecursively(root, nullptr);
 
     return false;
 }
 
-void Model::loadMaterials(FbxNode* node, const vk::raii::Queue& transferQueue)
+void Model::loadMaterials(FbxNode* pNode, const vk::raii::Queue& transferQueue)
 {
-    if (!node) return;
-    int matCount = node->GetMaterialCount();
+    if (!pNode) return;
+    int matCount = pNode->GetMaterialCount();
     for (size_t mi = 0; mi < matCount; ++mi)
     {
-        FbxSurfaceMaterial* mat = node->GetMaterial(mi);
+        FbxSurfaceMaterial* mat = pNode->GetMaterial(mi);
         if (!mat) continue;
 
         auto& material = materialLookup.emplace_back(deviceVK);
@@ -336,7 +337,7 @@ void Model::loadMaterials(FbxNode* node, const vk::raii::Queue& transferQueue)
                     texture.name = resTexture->GetRelativeFileName();
                     //todo: prepare vk context
                     texture.loadImage(texture.path, deviceVK, transferQueue);
-                    texture.index = static_cast<uint32_t>(textureLookup.size());
+                    texture.index = static_cast<uint32_t>(textureLookup.size() - 1);
 
                     material.textureMap[iter->second] = texture.index;
                 }
@@ -356,7 +357,7 @@ void Model::loadMaterials(FbxNode* node, const vk::raii::Queue& transferQueue)
     }
 }
 
-void Model::loadNodeRecursively(FbxNode* fbxNode)
+void Model::loadNodeRecursively(FbxNode* fbxNode, Node* parent)
 {
     const auto* pNodeAttribute = fbxNode->GetNodeAttribute();
 
@@ -364,50 +365,63 @@ void Model::loadNodeRecursively(FbxNode* fbxNode)
     {
         auto& node = nodeLookup.emplace_back();
         node.name = fbxNode->GetName();
+        node.index = nodeLookup.size() - 1;
+        node.parentIndex = parent ? parent->index : -1;
+        if (parent)
+            parent->childIndices.push_back(node.index);
+        node.translation = FBXToGLMType(fbxNode->LclTranslation.Get());
+        node.rotation = FBXToGLMType(fbxNode->LclRotation.Get());
+        node.scale = FBXToGLMType(fbxNode->LclScaling.Get());
+        node.matrix = FBXToGLMType(fbxNode->EvaluateLocalTransform());
 
-        FbxMesh* mesh = fbxNode->GetMesh();
-        // Control points = positions
-        FbxVector4* controlPoints = mesh->GetControlPoints();
-        const int polygonCount = mesh->GetPolygonCount();
-        const int vertexCount = mesh->GetControlPointsCount();
+        auto* mesh = new Mesh(deviceVK, node.matrix);
+        node.mesh = mesh;
 
-        size_t beginIndex = vertexLookup.size();
-        vertexLookup.resize(beginIndex + polygonCount * 3);
+        FbxMesh* fbxMesh = fbxNode->GetMesh();
+        int triangleCount = fbxMesh->GetPolygonCount();
+        
+        std::vector<int> triangleSmGroupLookup(triangleCount, -1);
+        GetTriangleSmGroupLookup(fbxMesh, triangleCount, triangleSmGroupLookup);
+
+        std::vector<int> triangleMaterialLookup(triangleCount, -1);
+        GetTriangleMaterialLookup(fbxMesh, triangleCount, triangleMaterialLookup);
+
+        FbxVector4* controlPoints = fbxMesh->GetControlPoints();
+        const int polygonCount = fbxMesh->GetPolygonCount();
+        const int vertexCount = fbxMesh->GetControlPointsCount();
+
+        std::vector<glm::vec3> groupPositions;
+        groupPositions.resize(polygonCount * 3);
 
         std::vector<uint32_t> polygonSizes(polygonCount, 0);
         int polygonIndexCount = 0;
         for (size_t p = 0; p < polygonCount; ++p)
         {
             // Expect polySize = 3
-            const int polySize = mesh->GetPolygonSize(p);
-            polygonSizes[p] = polySize;
-            for (size_t v = 0; v < polySize; ++v)
+            polygonSizes[p] = 3;
+            for (size_t v = 0; v < 3; ++v)
             {
                 // Position
-                const int controlPointIndex = mesh->GetPolygonVertex(p, v);
-                auto& vert = vertexLookup[beginIndex + polygonIndexCount + v];
+                const int controlPointIndex = fbxMesh->GetPolygonVertex(p, v);
                 FbxVector4 cp = controlPoints[controlPointIndex];
-                vert.pos = glm::vec3(static_cast<float>(cp[0]), static_cast<float>(cp[1]), static_cast<float>(cp[2]));
+                groupPositions[polygonIndexCount + v] = glm::vec3(static_cast<float>(cp[0]), static_cast<float>(cp[1]), static_cast<float>(cp[2]));
             }
-            polygonIndexCount += polySize;
+            polygonIndexCount += 3;
         }
 
-        auto* const mainLayer = mesh->GetLayer(0);
-        const int* indices = mesh->GetPolygonVertices();
+        auto* const mainLayer = fbxMesh->GetLayer(0);
+        const int* indices = fbxMesh->GetPolygonVertices();
 
         // Normal
         auto* fbxNorms = mainLayer->GetNormals();
-        std::vector<glm::vec3> norms(polygonIndexCount, glm::zero<glm::vec3>());
-        GetFBXAttributeValue(fbxNorms, norms, indices, polygonIndexCount, polygonSizes, polygonCount, vertexCount, glm::zero<glm::vec3>());
-        
-        for (size_t i = 0; i < polygonCount; ++i)
-        {
-            auto& vert = vertexLookup[beginIndex + i];
-            vert.normal = norms[i];
-        }
+        std::vector<glm::vec3> groupNorms(polygonIndexCount, glm::zero<glm::vec3>());
+        GetFBXAttributeValue(fbxNorms, groupNorms, indices, polygonIndexCount, polygonSizes, polygonCount, vertexCount, glm::zero<glm::vec3>());
 
         // Tangent
         // TBN = [T, cross(N, T)*sign, N]
+        std::vector<glm::vec4> groupTangents;
+        groupTangents.resize(polygonIndexCount, glm::zero<glm::vec4>());
+
         std::vector<glm::vec3> tangents(polygonIndexCount, glm::zero<glm::vec3>());
         std::vector<glm::vec3> binormals(polygonIndexCount, glm::zero<glm::vec3>());
         auto* fbxTangents = mainLayer->GetTangents();
@@ -419,35 +433,32 @@ void Model::loadNodeRecursively(FbxNode* fbxNode)
             for (size_t i = 0; i < tangents.size(); ++i)
             {
                 const auto tangent = tangents[i];
-                auto binormal = glm::cross(norms[i], tangent);
+                auto binormal = glm::cross(groupNorms[i], tangent);
                 float sign = glm::dot(binormal, binormals[i]);
 
-                auto& vert = vertexLookup[beginIndex + i];
-                vert.tangent = glm::vec4(tangent, sign > 0 ? 1.f : -1.f);
+                groupTangents[i] = glm::vec4(tangent, sign > 0 ? 1.f : -1.f);
             }
         }
 
         // UV
-        std::vector<glm::vec2> uvs[MAX_UV_SETS];
+        std::vector<glm::vec2> groupUVs[MAX_UV_SETS];
         int uvsetIndex = 0;
-        for (size_t i = 0; i < mesh->GetLayerCount(); i++)
+        for (size_t i = 0; i < fbxMesh->GetLayerCount(); i++)
         {
-            FbxLayer* fbxLayer = mesh->GetLayer(i);
+            FbxLayer* fbxLayer = fbxMesh->GetLayer(i);
             if (!fbxLayer)
                 continue;
             FbxLayerElementUV* fbxUVs = fbxLayer->GetUVs();
             if (!fbxUVs)
                 continue;
-        
-            uvs[uvsetIndex].resize(polygonIndexCount);
-            GetFBXAttributeValue(fbxUVs, uvs[uvsetIndex], indices, polygonIndexCount, polygonSizes, polygonCount, vertexCount, glm::zero<glm::vec2>());
+
+            groupUVs[uvsetIndex].resize(polygonIndexCount);
+            GetFBXAttributeValue(fbxUVs, groupUVs[uvsetIndex], indices, polygonIndexCount, polygonSizes, polygonCount, vertexCount, glm::zero<glm::vec2>());
             for (size_t j = 0; j < polygonCount; ++j)
             {
-                auto& vert = vertexLookup[beginIndex + i];
-                vert.uvs[uvsetIndex] = uvs[uvsetIndex][j];
                 if (flipV)
                 {
-                    vert.uvs[uvsetIndex].y = 1.0f - vert.uvs[uvsetIndex].y;
+                    groupUVs[uvsetIndex][j].y = 1.0f - groupUVs[uvsetIndex][j].y;
                 }
             }
 
@@ -457,23 +468,150 @@ void Model::loadNodeRecursively(FbxNode* fbxNode)
         }
 
         // Vertex Color
+        std::vector<glm::vec4> groupVertexColors(polygonIndexCount, glm::zero<glm::vec4>());
         auto* fbxVertexColors = mainLayer->GetVertexColors();
+
         if (fbxVertexColors)
         {
-            std::vector<glm::vec4> vertexColors(polygonIndexCount, glm::zero<glm::vec4>());
-            GetFBXAttributeValue(fbxVertexColors, vertexColors, indices, polygonIndexCount, polygonSizes, polygonCount, vertexCount, glm::zero<glm::vec4>());
-            for (size_t i = 0; i < polygonCount; ++i)
+            GetFBXAttributeValue(fbxVertexColors, groupVertexColors, indices, polygonIndexCount, polygonSizes, polygonCount, vertexCount, glm::zero<glm::vec4>());
+        }
+
+        // Divide the vertices by material
+        int materialCount = fbxNode->GetMaterialCount();
+        for (size_t mi = 0; (mi == 0 || mi < materialCount); ++mi)
+        {
+            std::vector<Vertex> vertices;
+            std::vector<int> vertexSmGroupLookup;
+            std::vector<uint32_t> indices;
+            for (size_t i = 0; i < triangleCount; ++i)
             {
-                auto& vert = vertexLookup[beginIndex + i];
-                vert.color = vertexColors[i];
+                if (triangleMaterialLookup[i] == mi)
+                {
+                    size_t vertexStartIndex = i * 3;
+                    for (size_t j = 0; j < 3; ++j)
+                    {
+                        size_t vertexIndex = vertexStartIndex + j;
+                        Vertex v{
+                            .pos = groupPositions[vertexIndex],
+                            .normal = groupNorms[vertexIndex],
+                            .tangent = groupTangents[vertexIndex],
+                            .color = groupVertexColors[vertexIndex]
+                        };
+                        for (size_t setIndex = 0; setIndex < MAX_UV_SETS; ++setIndex)
+                        {
+                            v.uvs[setIndex] = groupUVs[vertexIndex][setIndex];
+                        }
+                        
+                        for (size_t k = 0; k < vertices.size(); ++k)
+                        {
+                            if (vertices[k].pos == v.pos)
+                            {
+                                if (vertexSmGroupLookup[k] == triangleSmGroupLookup[i])
+                                {
+                                    vertices[k].normal += v.normal;
+                                    assert(vertices[k].tangent[3] * v.tangent[3] > 0 && "the w component of the tangent is incorrect.");
+                                    vertices[k].tangent += v.tangent;
+
+                                    v.normal = vertices[k].normal;
+                                    v.tangent = vertices[k].tangent;
+                                }
+                            }
+                        }
+
+                        // Check if there are any identical vertices
+                        size_t k = 0;
+                        for (size_t k = 0; k < vertices.size(); ++k)
+                        {
+                            if (vertices[k].pos == v.pos)
+                            {
+                                if (vertexSmGroupLookup[k] == triangleSmGroupLookup[i])
+                                {
+                                    int uvSet = 0;
+                                    for (uvSet = 0; uvSet < MAX_UV_SETS; uvSet++)
+                                    {
+                                        if (vertices[k].uvs[uvSet] == v.uvs[uvSet])
+                                        {
+                                            continue;
+                                        }
+                                        else
+                                        {
+                                            break;
+                                        }
+                                    }
+                                    if (uvSet == MAX_UV_SETS)
+                                    {
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+
+                        if (k == vertices.size())
+                        {
+                            vertices.push_back(v);
+                            vertexSmGroupLookup.push_back(triangleSmGroupLookup[i]);
+                        }
+
+                        indices.push_back(k);
+                    }
+                }
             }
+
+            Primitive primitive;
+            size_t oldSize = vertexLookup.size();
+            primitive.firstVertex = oldSize;
+            primitive.vertexCount = vertices.size();
+            vertexLookup.insert(vertexLookup.end(), vertices.begin(), vertices.end());
+            
+            std::ranges::for_each(indices, [oldSize](uint32_t& x) { x += oldSize; });
+            primitive.firstIndex = indexLookup.size();
+            indexLookup.insert(indexLookup.end(), indices.begin(), indices.end());
+            primitive.indexCount = indices.size();
+            //primitive.materialIndex = 
+            node.mesh->primitives.push_back(primitive);
+        }
+
+        for (size_t i = 0; i < fbxNode->GetChildCount(); ++i)
+        {
+            loadNodeRecursively(fbxNode->GetChild(i), &node);
         }
     }
     else
     {
         for (size_t i = 0; i < fbxNode->GetChildCount(); ++i)
         {
-            loadNodeRecursively(fbxNode->GetChild(i));
+            loadNodeRecursively(fbxNode->GetChild(i), parent);
         }
+    }
+}
+
+void Model::GetTriangleSmGroupLookup(FbxGeometryBase* pMesh, int triangleCount, std::vector<int>& triangleSmGroupLookup)
+{
+    auto* pSmoothing = pMesh->GetElementSmoothing();
+    if (pSmoothing)
+    {
+        bool bDirectSm = (pSmoothing->GetReferenceMode() == FbxLayerElement::eDirect);
+
+        for (int triangleIndex = 0; triangleIndex < triangleCount; ++triangleIndex)
+        {
+            int SmIndex = bDirectSm ? triangleIndex : pSmoothing->GetIndexArray().GetAt(triangleIndex);
+            int iSmoothing = pSmoothing->GetDirectArray().GetAt(SmIndex);
+
+            triangleSmGroupLookup[triangleIndex] = iSmoothing;
+        }
+    }
+}
+
+void Model::GetTriangleMaterialLookup(FbxGeometryBase* pMesh, int triangleCount, std::vector<int>& triangleMaterialLookup)
+{
+    auto* pMaterial = pMesh->GetElementMaterial();
+    if (!pMaterial)
+        return;
+
+    for (int triangleIndex = 0; triangleIndex < triangleCount; ++triangleIndex)
+    {
+        int materialIndex = pMaterial->GetIndexArray().GetAt(triangleIndex);
+
+        triangleMaterialLookup[triangleIndex] = materialIndex;
     }
 }

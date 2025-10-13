@@ -58,6 +58,15 @@ inline glm::vec2 FBXToGLMType(const FbxVector2& t)
     );
 }
 
+inline glm::vec3 FBXToGLMType(const FbxDouble3& t)
+{
+    return glm::vec3(
+        static_cast<float>(t.mData[0]),
+        static_cast<float>(t.mData[1]),
+        static_cast<float>(t.mData[2])
+    );
+}
+
 inline glm::vec3 FBXToGLMType(const FbxVector4& t)
 {
     return glm::vec3(
@@ -75,6 +84,19 @@ inline glm::vec4 FBXToGLMType(const FbxColor& t)
         static_cast<float>(t.mBlue),
         static_cast<float>(t.mAlpha)
     );
+}
+
+inline glm::mat4 FBXToGLMType(const FbxMatrix& t)
+{
+    glm::mat4 m;
+    for (int row = 0; row < 4; ++row)
+    {
+        for (int col = 0; col < 4; ++col)
+        {
+            m[col][row] = static_cast<float>(t.Get(row, col));
+        }
+    }
+    return m;
 }
 
 template<typename T1, typename T2>
@@ -257,6 +279,23 @@ struct Vertex {
     }
 };
 
+// helper: splitmix64 for mixing
+static inline uint64_t splitmix64(uint64_t x) noexcept {
+    x += 0x9e3779b97f4a7c15ULL;
+    x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9ULL;
+    x = (x ^ (x >> 27)) * 0x94d049bb133111ebULL;
+    return x ^ (x >> 31);
+}
+
+// helper: convert float -> uint32_t bit pattern (works for NaN/ -0.0 too as bits)
+static inline uint32_t float_to_bits(float f) noexcept {
+    static_assert(sizeof(float) == sizeof(uint32_t), "float must be 32-bit");
+    uint32_t bits;
+    std::memcpy(&bits, &f, sizeof(bits));
+    return bits;
+}
+
+
 struct Primitive {
     uint32_t firstIndex;
     uint32_t indexCount;
@@ -273,7 +312,6 @@ struct Primitive {
     } dimensions;
 
     void SetDimensions(glm::vec3 min, glm::vec3 max);
-    Primitive(uint32_t firstIndex, uint32_t indexCount, size_t materialIndex) : firstIndex(firstIndex), indexCount(indexCount), materialIndex(materialIndex) {};
 };
 
 struct Mesh
@@ -316,7 +354,7 @@ struct Node
     glm::mat4 matrix;
     std::string name;
     Mesh* mesh = nullptr;
-    size_t skinIndex;
+    //size_t skinIndex;
     glm::vec3 translation{};
     glm::vec3 scale{ 1.0f };
     glm::quat rotation{};
@@ -346,10 +384,12 @@ public:
         Processing images will involve using a queue.
     */
     bool loadFromFile(std::string filename, VulkanDevice* device, const vk::raii::Queue& transferQueue, FileLoadingFlags fileLoadingFlags = FileLoadingFlags::None, float scale = 1.0f);
-     void loadNodeRecursively(FbxNode* node);
+    void loadNodeRecursively(FbxNode* pNode, Node* parent);
+    void GetTriangleSmGroupLookup(FbxGeometryBase* pMesh, int triangleCount, std::vector<int>& triangleSmGroupLookup);
+    void GetTriangleMaterialLookup(FbxGeometryBase* pMesh, int triangleCount, std::vector<int>& triangleMaterialLookup);
     // void loadSkins();
      //bool getTextureMetaFromFile(const std::string& path, Texture& outMeta);
-     void loadMaterials(FbxNode* node, const vk::raii::Queue& transferQueue);
+     void loadMaterials(FbxNode* pNode, const vk::raii::Queue& transferQueue);
     // void loadAnimations();
 public:
     //Node* findNode(Node* parent, uint32_t index);
@@ -358,7 +398,7 @@ public:
     //void bindBuffers(vk::raii::CommandBuffer& commandBuffer);
     //void prepareNodeDescriptor(Node* node, vk::raii::DescriptorSetLayout& descriptorSetLayout);
     //void drawNode(Node* node, vk::raii::CommandBuffer& commandBuffer, uint32_t renderFlags = 0, const vk::raii::PipelineLayout& pipelineLayout = nullptr, uint32_t bindImageSet = 1);
-    void draw(vk::raii::CommandBuffer& commandBuffer, uint32_t renderFlags = 0, const vk::raii::PipelineLayout& pipelineLayout = nullptr, uint32_t bindImageSet = 1);
+    //void draw(vk::raii::CommandBuffer& commandBuffer, uint32_t renderFlags = 0, const vk::raii::PipelineLayout& pipelineLayout = nullptr, uint32_t bindImageSet = 1);
 
     //void getNodeDimensions(Node* node, glm::vec3& min, glm::vec3& max);
     //void getSceneDimensions();
@@ -387,6 +427,8 @@ public:
     } dimensions;
 
     std::vector<Vertex> vertexLookup;
+
+    std::vector<uint32_t> indexLookup;
 
     std::vector<Node> nodeLookup;
 
