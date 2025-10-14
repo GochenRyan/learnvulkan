@@ -34,7 +34,6 @@ enum class ShaderChannel : int8_t
     ChannelCount
 };
 
-enum class DescriptorBindingFlags { ImageBaseColor, ImageNormalMap };
 enum class AlphaMode { ALPHAMODE_OPAQUE, ALPHAMODE_MASK, ALPHAMODE_BLEND };
 enum class FileLoadingFlags : uint32_t
 {
@@ -211,7 +210,6 @@ struct Material
     vk::raii::DescriptorSet descriptorSet = nullptr;
 
     Material(VulkanDevice* device) : deviceVK(device) {};
-    //void createDescriptorSet(vk::raii::DescriptorPool descriptorPool, vk::raii::DescriptorSetLayout descriptorSetLayout, DescriptorBindingFlags descriptorBindingFlags);
 };
 
 constexpr uint8_t MAX_UV_SETS = 8;
@@ -279,23 +277,6 @@ struct Vertex {
     }
 };
 
-// helper: splitmix64 for mixing
-static inline uint64_t splitmix64(uint64_t x) noexcept {
-    x += 0x9e3779b97f4a7c15ULL;
-    x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9ULL;
-    x = (x ^ (x >> 27)) * 0x94d049bb133111ebULL;
-    return x ^ (x >> 31);
-}
-
-// helper: convert float -> uint32_t bit pattern (works for NaN/ -0.0 too as bits)
-static inline uint32_t float_to_bits(float f) noexcept {
-    static_assert(sizeof(float) == sizeof(uint32_t), "float must be 32-bit");
-    uint32_t bits;
-    std::memcpy(&bits, &f, sizeof(bits));
-    return bits;
-}
-
-
 struct Primitive {
     uint32_t firstIndex;
     uint32_t indexCount;
@@ -325,7 +306,7 @@ struct Mesh
         vk::raii::DeviceMemory memory = nullptr;
         vk::DescriptorBufferInfo descriptor;
         vk::raii::DescriptorSet descriptorSet = nullptr;
-        void* mapped;
+        void* mapped = nullptr;
     } uniformBuffer;
 
     struct UniformBlock {
@@ -348,12 +329,19 @@ struct Skin
 
 struct Node
 {
-    size_t index;
-    size_t parentIndex;
+    Node() = default;
+    ~Node();
+    Node(const Node& rhs) = delete;
+    Node& operator=(const Node& rhs) = delete;
+    Node(Node&& rhs) = default;
+    Node& operator=(Node&& rhs) = delete;
+
+    size_t index{};
+    size_t parentIndex{};
     std::vector<size_t> childIndices;
     glm::mat4 matrix;
     std::string name;
-    Mesh* mesh = nullptr;
+    std::unique_ptr<Mesh> mesh = nullptr;
     //size_t skinIndex;
     glm::vec3 translation{};
     glm::vec3 scale{ 1.0f };
@@ -361,7 +349,6 @@ struct Node
     glm::mat4 LocalMatrix();
     glm::mat4 GetMatrix();
     void Update();
-    ~Node();
 };
 
 // struct Animation
@@ -376,9 +363,9 @@ public:
     Model() noexcept = default;
     Model(const Model& rhs) = delete;
     Model& operator=(const Model& rhs) = delete;
-    Model(Model&& rhs) = delete;
-    Model& operator=(Model&& rhs) = delete;
-    ~Model() = default;
+    Model(Model&& rhs) = default;
+    Model& operator=(Model&& rhs) = default;
+    ~Model();
 public:
     /*
         Processing images will involve using a queue.
@@ -390,13 +377,14 @@ public:
     // void loadSkins();
      //bool getTextureMetaFromFile(const std::string& path, Texture& outMeta);
      void loadMaterials(FbxNode* pNode, const vk::raii::Queue& transferQueue);
+     void checkMaterials();
     // void loadAnimations();
+     void createDescriptorSet(vk::raii::DescriptorPool& descriptorPool, vk::raii::DescriptorSetLayout& descriptorSetLayout);
 public:
-    //Node* findNode(Node* parent, uint32_t index);
-    //Node* nodeFromIndex(uint32_t index);
+    Node* nodeFromIndex(uint32_t index);
 public:
     //void bindBuffers(vk::raii::CommandBuffer& commandBuffer);
-    //void prepareNodeDescriptor(Node* node, vk::raii::DescriptorSetLayout& descriptorSetLayout);
+    void prepareNodeDescriptor(Node* node, vk::raii::DescriptorSetLayout& descriptorSetLayout);
     //void drawNode(Node* node, vk::raii::CommandBuffer& commandBuffer, uint32_t renderFlags = 0, const vk::raii::PipelineLayout& pipelineLayout = nullptr, uint32_t bindImageSet = 1);
     //void draw(vk::raii::CommandBuffer& commandBuffer, uint32_t renderFlags = 0, const vk::raii::PipelineLayout& pipelineLayout = nullptr, uint32_t bindImageSet = 1);
 
@@ -467,5 +455,8 @@ public:
         {FbxSurfaceMaterial::sTransparencyFactor, "OpacityMask"}
     };
 private:
+    void createEmptyTexture(const vk::raii::Queue& transferQueue);
+private:
+    Texture emptyTexture;
     bool flipV = true;
 };

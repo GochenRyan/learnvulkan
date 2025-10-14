@@ -1068,29 +1068,29 @@ void VulkanApp::createDescriptorSets()
     //    .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal
     //};
 
-    ////// Model
-    ////vk::DescriptorImageInfo modelDescriptorColorMap{
-    ////    .sampler = textureSampler,
-    ////    .imageView = offScreenFramebuffer.normal.view,
-    ////    .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal
-    ////};
-    ////vk::DescriptorImageInfo modelDescriptorNormalMap{
-    ////    .sampler = textureSampler,
-    ////    .imageView = offScreenFramebuffer.normal.view,
-    ////    .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal
-    ////};
+    //// Model
+    //vk::DescriptorImageInfo modelDescriptorColorMap{
+    //    .sampler = textureSampler,
+    //    .imageView = models.model,
+    //    .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal
+    //};
+    //vk::DescriptorImageInfo modelDescriptorNormalMap{
+    //    .sampler = textureSampler,
+    //    .imageView = offScreenFramebuffer.normal.view,
+    //    .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal
+    //};
 
-    ////// Background
-    ////vk::DescriptorImageInfo bgDescriptorColorMap{
-    ////    .sampler = textureSampler,
-    ////    .imageView = offScreenFramebuffer.normal.view,
-    ////    .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal
-    ////};
-    ////vk::DescriptorImageInfo bgDescriptorNormalMap{
-    ////    .sampler = textureSampler,
-    ////    .imageView = offScreenFramebuffer.normal.view,
-    ////    .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal
-    ////};
+    //// Background
+    //vk::DescriptorImageInfo bgDescriptorColorMap{
+    //    .sampler = textureSampler,
+    //    .imageView = offScreenFramebuffer.normal.view,
+    //    .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal
+    //};
+    //vk::DescriptorImageInfo bgDescriptorNormalMap{
+    //    .sampler = textureSampler,
+    //    .imageView = offScreenFramebuffer.normal.view,
+    //    .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal
+    //};
 
     //auto sets = deviceVK->logicDevice.allocateDescriptorSets(allocInfo);
     //for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
@@ -1145,7 +1145,7 @@ void VulkanApp::createDescriptorSets()
     //        vk::WriteDescriptorSet{.dstSet = descriptorSets[i].floor, .dstBinding = 2, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &bgDescriptorNormalMap}
     //    };
     //    deviceVK->logicDevice.updateDescriptorSets(writeDescriptorSets, {});
-    //}
+    }
 }
 
 void VulkanApp::createTextureSampler()

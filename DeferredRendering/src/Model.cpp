@@ -187,6 +187,76 @@ void Texture::updateDescriptor()
 }
 
 
+void Model::createDescriptorSet(vk::raii::DescriptorPool& descriptorPool, vk::raii::DescriptorSetLayout& descriptorSetLayout)
+{
+    for (auto& material : materialLookup)
+    {
+        vk::DescriptorSetAllocateInfo allocInfo{
+            .descriptorPool = descriptorPool,
+            .descriptorSetCount = 1,
+            .pSetLayouts = &*descriptorSetLayout
+        };
+        material.descriptorSet = std::move(deviceVK->logicDevice.allocateDescriptorSets(allocInfo)[0]);
+
+        std::vector<vk::WriteDescriptorSet> writeDescriptorSets;
+
+        {
+            auto& texture = textureLookup[material.textureMap["BaseColor"]];
+            vk::WriteDescriptorSet descriptorWrite{
+                .dstSet = material.descriptorSet,
+                .dstBinding = 1,
+                .dstArrayElement = 0,
+                .descriptorCount = 1,
+                .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+                .pImageInfo = &(texture.descriptor)
+            };
+            writeDescriptorSets.push_back(descriptorWrite);
+        }
+
+        {
+            auto& texture = textureLookup[material.textureMap["Normal"]];
+            vk::WriteDescriptorSet descriptorWrite{
+                .dstSet = material.descriptorSet,
+                .dstBinding = 2,
+                .dstArrayElement = 0,
+                .descriptorCount = 1,
+                .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+                .pImageInfo = &(texture.descriptor)
+            };
+            writeDescriptorSets.push_back(descriptorWrite);
+        }
+        
+        {
+            auto& texture = textureLookup[material.textureMap["Metallic"]];
+            vk::WriteDescriptorSet descriptorWrite{
+                .dstSet = material.descriptorSet,
+                .dstBinding = 3,
+                .dstArrayElement = 0,
+                .descriptorCount = 1,
+                .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+                .pImageInfo = &(texture.descriptor)
+            };
+            writeDescriptorSets.push_back(descriptorWrite);
+        }
+
+        {
+            auto& texture = textureLookup[material.textureMap["Roughness"]];
+            vk::WriteDescriptorSet descriptorWrite{
+                .dstSet = material.descriptorSet,
+                .dstBinding = 4,
+                .dstArrayElement = 0,
+                .descriptorCount = 1,
+                .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+                .pImageInfo = &(texture.descriptor)
+            };
+            writeDescriptorSets.push_back(descriptorWrite);
+        }
+
+        deviceVK->logicDevice.updateDescriptorSets(writeDescriptorSets, {});
+    }
+}
+
+
 void Primitive::SetDimensions(glm::vec3 min, glm::vec3 max)
 {
 }
@@ -198,6 +268,8 @@ Mesh::Mesh(VulkanDevice *deviceVK, glm::mat4 matrix)
 
 Mesh::~Mesh()
 {
+    deviceVK = nullptr;
+    uniformBuffer.mapped = nullptr;
 }
 
 
@@ -219,6 +291,10 @@ Node::~Node()
 {
 }
 
+Model::~Model()
+{
+    deviceVK = nullptr;
+}
 
 bool Model::loadFromFile(std::string filename, VulkanDevice* device, const vk::raii::Queue &transferQueue, FileLoadingFlags fileLoadingFlags, float scale)
 {
@@ -287,9 +363,41 @@ bool Model::loadFromFile(std::string filename, VulkanDevice* device, const vk::r
         loadMaterials(node, transferQueue);
     }
 
+
+
     loadNodeRecursively(root, nullptr);
 
-    return false;
+    scene->Destroy();
+    manager->Destroy();
+
+    return true;
+}
+
+void Model::checkMaterials()
+{
+    for (int i = 0; i < materialLookup.size(); ++i)
+    {
+        auto& material = materialLookup[i];
+        if (material.textureMap.find("BaseColor") == material.textureMap.end())
+        {
+            throw std::runtime_error("No base color texture");
+        }
+
+        if (material.textureMap.find("Normal") == material.textureMap.end())
+        {
+            throw std::runtime_error("No normal texture");
+        }
+
+        if (material.textureMap.find("Metallic") == material.textureMap.end())
+        {
+            material.textureMap["Metallic"] = -1;
+        }
+
+        if (material.textureMap.find("Roughness") == material.textureMap.end())
+        {
+            material.textureMap["Roughness"] = -1;
+        }
+    }
 }
 
 void Model::loadMaterials(FbxNode* pNode, const vk::raii::Queue& transferQueue)
@@ -374,8 +482,7 @@ void Model::loadNodeRecursively(FbxNode* fbxNode, Node* parent)
         node.scale = FBXToGLMType(fbxNode->LclScaling.Get());
         node.matrix = FBXToGLMType(fbxNode->EvaluateLocalTransform());
 
-        auto* mesh = new Mesh(deviceVK, node.matrix);
-        node.mesh = mesh;
+        node.mesh = std::make_unique<Mesh>(deviceVK, node.matrix);
 
         FbxMesh* fbxMesh = fbxNode->GetMesh();
         int triangleCount = fbxMesh->GetPolygonCount();
@@ -499,7 +606,7 @@ void Model::loadNodeRecursively(FbxNode* fbxNode, Node* parent)
                         };
                         for (size_t setIndex = 0; setIndex < MAX_UV_SETS; ++setIndex)
                         {
-                            v.uvs[setIndex] = groupUVs[vertexIndex][setIndex];
+                            v.uvs[setIndex] = groupUVs[setIndex].size() > vertexIndex ? groupUVs[setIndex][vertexIndex] : glm::zero<glm::vec2>();
                         }
                         
                         for (size_t k = 0; k < vertices.size(); ++k)
@@ -520,7 +627,7 @@ void Model::loadNodeRecursively(FbxNode* fbxNode, Node* parent)
 
                         // Check if there are any identical vertices
                         size_t k = 0;
-                        for (size_t k = 0; k < vertices.size(); ++k)
+                        for (k = 0; k < vertices.size(); ++k)
                         {
                             if (vertices[k].pos == v.pos)
                             {
@@ -567,7 +674,7 @@ void Model::loadNodeRecursively(FbxNode* fbxNode, Node* parent)
             primitive.firstIndex = indexLookup.size();
             indexLookup.insert(indexLookup.end(), indices.begin(), indices.end());
             primitive.indexCount = indices.size();
-            //primitive.materialIndex = 
+            primitive.materialIndex = mi;
             node.mesh->primitives.push_back(primitive);
         }
 
@@ -588,17 +695,17 @@ void Model::loadNodeRecursively(FbxNode* fbxNode, Node* parent)
 void Model::GetTriangleSmGroupLookup(FbxGeometryBase* pMesh, int triangleCount, std::vector<int>& triangleSmGroupLookup)
 {
     auto* pSmoothing = pMesh->GetElementSmoothing();
-    if (pSmoothing)
+    if (!pSmoothing)
+        return;
+
+    bool bDirectSm = (pSmoothing->GetReferenceMode() == FbxLayerElement::eDirect);
+
+    for (int triangleIndex = 0; triangleIndex < triangleCount; ++triangleIndex)
     {
-        bool bDirectSm = (pSmoothing->GetReferenceMode() == FbxLayerElement::eDirect);
+        int SmIndex = bDirectSm ? triangleIndex : pSmoothing->GetIndexArray().GetAt(triangleIndex);
+        int iSmoothing = pSmoothing->GetDirectArray().GetAt(SmIndex);
 
-        for (int triangleIndex = 0; triangleIndex < triangleCount; ++triangleIndex)
-        {
-            int SmIndex = bDirectSm ? triangleIndex : pSmoothing->GetIndexArray().GetAt(triangleIndex);
-            int iSmoothing = pSmoothing->GetDirectArray().GetAt(SmIndex);
-
-            triangleSmGroupLookup[triangleIndex] = iSmoothing;
-        }
+        triangleSmGroupLookup[triangleIndex] = iSmoothing;
     }
 }
 
@@ -614,4 +721,76 @@ void Model::GetTriangleMaterialLookup(FbxGeometryBase* pMesh, int triangleCount,
 
         triangleMaterialLookup[triangleIndex] = materialIndex;
     }
+}
+
+Node* Model::nodeFromIndex(uint32_t index)
+{
+    if (nodeLookup.size() > index)
+        return &(nodeLookup[index]);
+    else
+        return nullptr;
+}
+
+void Model::createEmptyTexture(const vk::raii::Queue& transferQueue)
+{
+    emptyTexture.deviceVK = deviceVK;
+    emptyTexture.width = 1;
+    emptyTexture.height = 1;
+    emptyTexture.layerCount = 1;
+    emptyTexture.mipLevels = 1;
+    emptyTexture.index = -1;
+
+    vk::DeviceSize imageSize = emptyTexture.width * emptyTexture.height * 4;
+
+    vk::raii::Buffer stagingBuffer = nullptr;
+    vk::raii::DeviceMemory stagingBufferMemory = nullptr;
+    deviceVK->CreateBuffer(imageSize, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, stagingBuffer, stagingBufferMemory);
+    void* dataStaging = stagingBufferMemory.mapMemory(0, imageSize);
+    memcpy(dataStaging, 0, imageSize);
+    stagingBufferMemory.unmapMemory();
+
+    deviceVK->CreateImage(emptyTexture.width, emptyTexture.height, vk::Format::eR8G8B8A8Srgb, emptyTexture.mipLevels, vk::ImageTiling::eOptimal, vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eSampled, vk::MemoryPropertyFlagBits::eDeviceLocal, emptyTexture.image, emptyTexture.deviceMemory);
+    deviceVK->transitionImageLayout(emptyTexture.image, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal, transferQueue);
+    deviceVK->copyBufferToImage(stagingBuffer, emptyTexture.image, static_cast<uint32_t>(emptyTexture.width), static_cast<uint32_t>(emptyTexture.height), transferQueue);
+    deviceVK->transitionImageLayout(emptyTexture.image, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eTransferSrcOptimal, transferQueue);
+
+    vk::PhysicalDeviceProperties properties = deviceVK->physicalDevice.getProperties();
+    // Sampler
+    vk::SamplerCreateInfo samplerCI{
+        .magFilter = vk::Filter::eLinear,
+        .minFilter = vk::Filter::eLinear,
+        .mipmapMode = vk::SamplerMipmapMode::eLinear,
+        .addressModeU = vk::SamplerAddressMode::eRepeat,
+        .addressModeV = vk::SamplerAddressMode::eRepeat,
+        .addressModeW = vk::SamplerAddressMode::eRepeat,
+        .mipLodBias = 0,
+        .anisotropyEnable = vk::True,
+        .maxAnisotropy = properties.limits.maxSamplerAnisotropy,
+        .compareEnable = vk::False,
+        .compareOp = vk::CompareOp::eNever,
+        .maxLod = (float)emptyTexture.mipLevels,
+        .borderColor = vk::BorderColor::eFloatOpaqueWhite,
+        /*
+            The unnormalizedCoordinates field specifies which coordinate system you want to use to address texels in an image.
+            If this field is VK_TRUE, then you can simply use coordinates within the [0, texWidth) and [0, texHeight) range. If it is VK_FALSE, then the texels are addressed using the [0, 1) range on all axes.
+            Real-world applications almost always use normalized coordinates, because then it�s possible to use textures of varying resolutions with the exact same coordinates.
+        */
+        .unnormalizedCoordinates = vk::False
+    };
+    emptyTexture.sampler = deviceVK->logicDevice.createSampler(samplerCI);
+
+    emptyTexture.format = vk::Format::eR8G8B8A8Srgb;
+
+    vk::ImageViewCreateInfo viewCI{
+        .image = emptyTexture.image,
+        .viewType = vk::ImageViewType::e2D,
+        .format = vk::Format::eR8G8B8A8Srgb,
+        .subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eColor, .levelCount = emptyTexture.mipLevels, .layerCount = 1 }
+    };
+    emptyTexture.view = deviceVK->logicDevice.createImageView(viewCI);
+
+    emptyTexture.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+    emptyTexture.descriptor.sampler = emptyTexture.sampler;
+    emptyTexture.descriptor.imageView = emptyTexture.view;
+    emptyTexture.descriptor.imageLayout = emptyTexture.imageLayout;
 }

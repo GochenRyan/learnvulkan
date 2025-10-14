@@ -4,6 +4,8 @@
 */
 [[vk::binding(1, 0)]] Sampler2D samplerColor;
 [[vk::binding(2, 0)]] Sampler2D samplerNormalMap;
+[[vk::binding(3, 0)]] Sampler2D samplerMetallicMap;
+[[vk::binding(4, 0)]] Sampler2D samplerRoughnessMap;
 
 struct VSInput
 {
