@@ -169,9 +169,7 @@ void Texture::loadImage(std::string_view path, VulkanDevice* device, const vk::r
     view = deviceVK->logicDevice.createImageView(viewCI);
 
     imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
-    descriptor.sampler = sampler;
-    descriptor.imageView = view;
-    descriptor.imageLayout = imageLayout;
+    updateDescriptor();
 }
 
 Texture::~Texture()
@@ -204,7 +202,7 @@ void Model::createDescriptorSet(vk::raii::DescriptorPool& descriptorPool, vk::ra
             auto& texture = textureLookup[material.textureMap["BaseColor"]];
             vk::WriteDescriptorSet descriptorWrite{
                 .dstSet = material.descriptorSet,
-                .dstBinding = 1,
+                .dstBinding = writeDescriptorSets.size(),
                 .dstArrayElement = 0,
                 .descriptorCount = 1,
                 .descriptorType = vk::DescriptorType::eCombinedImageSampler,
@@ -217,7 +215,7 @@ void Model::createDescriptorSet(vk::raii::DescriptorPool& descriptorPool, vk::ra
             auto& texture = textureLookup[material.textureMap["Normal"]];
             vk::WriteDescriptorSet descriptorWrite{
                 .dstSet = material.descriptorSet,
-                .dstBinding = 2,
+                .dstBinding = writeDescriptorSets.size(),
                 .dstArrayElement = 0,
                 .descriptorCount = 1,
                 .descriptorType = vk::DescriptorType::eCombinedImageSampler,
@@ -230,7 +228,7 @@ void Model::createDescriptorSet(vk::raii::DescriptorPool& descriptorPool, vk::ra
             auto& texture = textureLookup[material.textureMap["Metallic"]];
             vk::WriteDescriptorSet descriptorWrite{
                 .dstSet = material.descriptorSet,
-                .dstBinding = 3,
+                .dstBinding = writeDescriptorSets.size(),
                 .dstArrayElement = 0,
                 .descriptorCount = 1,
                 .descriptorType = vk::DescriptorType::eCombinedImageSampler,
@@ -243,7 +241,7 @@ void Model::createDescriptorSet(vk::raii::DescriptorPool& descriptorPool, vk::ra
             auto& texture = textureLookup[material.textureMap["Roughness"]];
             vk::WriteDescriptorSet descriptorWrite{
                 .dstSet = material.descriptorSet,
-                .dstBinding = 4,
+                .dstBinding = writeDescriptorSets.size(),
                 .dstArrayElement = 0,
                 .descriptorCount = 1,
                 .descriptorType = vk::DescriptorType::eCombinedImageSampler,
@@ -362,8 +360,6 @@ bool Model::loadFromFile(std::string filename, VulkanDevice* device, const vk::r
     {
         loadMaterials(node, transferQueue);
     }
-
-
 
     loadNodeRecursively(root, nullptr);
 

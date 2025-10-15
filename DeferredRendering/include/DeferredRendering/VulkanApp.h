@@ -97,7 +97,6 @@ private:
     void recordCommandBuffer(uint32_t imageIndex);
 
     void createDescriptorPool();
-    void createDescriptorSetLayout();
     void createDescriptorSets();
 private:
     /* helper */
@@ -109,7 +108,8 @@ private:
     void transition_image_layout(uint32_t imageIndex, vk::ImageLayout oldLayout, vk::ImageLayout newLayout, vk::AccessFlags2 srcAccessMask, vk::AccessFlags2 dstAccessMask, vk::PipelineStageFlags2 srcStageMask, vk::PipelineStageFlags2 dstStageMask);
     void copyBuffer(vk::raii::Buffer& srcBuffer, vk::raii::Buffer& dstBuffer, vk::DeviceSize size);
 
-    void updateUniformBuffer(uint32_t currentImage);
+    void updateUniformBufferOffscreen(uint32_t currentImage);
+    void updateUniformBufferComposition(uint32_t currentFrame);
     
     void createTextureSampler();
     
@@ -178,13 +178,6 @@ private:
         vk::raii::Pipeline composition = nullptr;
     } pipelines;
 
-    struct DescriptorSets {
-        vk::raii::DescriptorSet model = nullptr;
-        vk::raii::DescriptorSet floor = nullptr;
-        vk::raii::DescriptorSet composition = nullptr;
-    };
-    std::array<DescriptorSets, MAX_FRAMES_IN_FLIGHT> descriptorSets;
-
     struct UniformDataOffscreen {
         glm::mat4 projection;
         glm::mat4 model;
@@ -210,16 +203,23 @@ private:
     };
     std::array<UniformBuffers, MAX_FRAMES_IN_FLIGHT> uniformBuffers;
 
-    struct {
-        Model model;
-        Model Floor;
-    } models;
+    std::vector<Model> models;
 
     std::unique_ptr<VulkanDevice> deviceVK = nullptr;
+
+    struct DescriptorSets
+    {
+        std::vector<vk::raii::DescriptorSet> modelUBOs;
+        vk::raii::DescriptorSet composition = nullptr;
+    };
+
+    std::array<DescriptorSets, MAX_FRAMES_IN_FLIGHT> descriptorSets;
 public:
     /*
         Although many drivers and platforms trigger VK_ERROR_OUT_OF_DATE_KHR automatically after a window resize, it is not guaranteed to happen. 
         That's why we'll add some extra code to also handle resizes explicitly. 
     */
     bool framebufferResized = false;
+
+    int32_t debugDisplayTarget = 0;
 };
