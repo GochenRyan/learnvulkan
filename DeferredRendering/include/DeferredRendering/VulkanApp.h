@@ -116,7 +116,7 @@ private:
     vk::Format findSupportedFormat(const std::vector<vk::Format>& candidates, vk::ImageTiling tiling, vk::FormatFeatureFlags features);
     vk::Format findDepthFormat();
     bool hasStencilComponent(vk::Format format);
-    void createAttachment(vk::Format format, vk::ImageUsageFlagBits usage, FramebufferAttachment* attachment);
+    void createAttachment(vk::ImageUsageFlagBits usage, FramebufferAttachment* attachment);
 private:
     GLFWwindow* window{ nullptr };
 
@@ -154,8 +154,6 @@ private:
 
     uint32_t semaphoreIndex = 0;
     uint32_t currentFrame = 0;
-
-    vk::raii::DescriptorSetLayout descriptorSetLayout = nullptr;
     
     std::vector<void*> uniformBuffersMapped;
     vk::raii::DescriptorPool descriptorPool = nullptr;
@@ -212,6 +210,10 @@ private:
         std::vector<vk::raii::DescriptorSet> modelUBOs;
         vk::raii::DescriptorSet composition = nullptr;
     };
+
+    vk::raii::DescriptorSetLayout descriptorSetLayoutOffScreenUBO = nullptr;
+    vk::raii::DescriptorSetLayout descriptorSetLayoutComposition = nullptr;
+    vk::raii::DescriptorSetLayout descriptorSetLayoutOffScreenMat = nullptr;
 
     std::array<DescriptorSets, MAX_FRAMES_IN_FLIGHT> descriptorSets;
 public:

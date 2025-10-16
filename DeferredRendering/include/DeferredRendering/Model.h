@@ -44,6 +44,14 @@ enum class FileLoadingFlags : uint32_t
     DontLoadImages = 0x00000008
 };
 
+enum class RenderFlags : uint32_t
+{
+    BindImages = 0x00000001,
+    RenderOpaqueNodes = 0x00000002,
+    RenderAlphaMaskedNodes = 0x00000004,
+    RenderAlphaBlendedNodes = 0x00000008
+};
+
 inline FileLoadingFlags operator|(FileLoadingFlags lhs, FileLoadingFlags rhs)
 {
     return static_cast<FileLoadingFlags>(static_cast<uint32_t>(lhs) | static_cast<uint32_t>(rhs));
@@ -277,19 +285,19 @@ struct Vertex {
     }
 };
 
-struct Primitive {
-    uint32_t firstIndex;
-    uint32_t indexCount;
-    uint32_t firstVertex;
-    uint32_t vertexCount;
-    size_t materialIndex;
+struct Primitive {    
+    uint32_t firstIndex{};
+    uint32_t indexCount{};
+    uint32_t firstVertex{};
+    uint32_t vertexCount{};
+    size_t materialIndex{};
 
     struct Dimensions {
         glm::vec3 min = glm::vec3(FLT_MAX);
         glm::vec3 max = glm::vec3(-FLT_MAX);
-        glm::vec3 size;
-        glm::vec3 center;
-        float radius;
+        glm::vec3 size{};
+        glm::vec3 center{};
+        float radius{};
     } dimensions;
 
     void SetDimensions(glm::vec3 min, glm::vec3 max);
@@ -384,9 +392,9 @@ public:
     Node* nodeFromIndex(uint32_t index);
 public:
     //void bindBuffers(vk::raii::CommandBuffer& commandBuffer);
-    void prepareNodeDescriptor(Node* node, vk::raii::DescriptorSetLayout& descriptorSetLayout);
-    //void drawNode(Node* node, vk::raii::CommandBuffer& commandBuffer, uint32_t renderFlags = 0, const vk::raii::PipelineLayout& pipelineLayout = nullptr, uint32_t bindImageSet = 1);
-    //void draw(vk::raii::CommandBuffer& commandBuffer, uint32_t renderFlags = 0, const vk::raii::PipelineLayout& pipelineLayout = nullptr, uint32_t bindImageSet = 1);
+    //void prepareNodeDescriptor(Node* node, vk::raii::DescriptorSetLayout& descriptorSetLayout);
+    void drawNode(Node* node, vk::raii::CommandBuffer& commandBuffer, RenderFlags renderFlags = RenderFlags::BindImages, const vk::raii::PipelineLayout& pipelineLayout = nullptr, uint32_t bindImageSet = 1);
+    void draw(vk::raii::CommandBuffer& commandBuffer, RenderFlags renderFlags = RenderFlags::BindImages, const vk::raii::PipelineLayout& pipelineLayout = nullptr, uint32_t bindImageSet = 1);
 
     //void getNodeDimensions(Node* node, glm::vec3& min, glm::vec3& max);
     //void getSceneDimensions();

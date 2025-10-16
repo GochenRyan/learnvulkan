@@ -151,9 +151,9 @@ void VulkanApp::initVulkan()
     createCommandPool();
     createCommandBuffers();
     createSyncObjects();
-    createDepthResources();
     createSwapChain();
     createSwapChainImageViews();
+    createDepthResources();
     createRenderPass();
     //todo: Pipline Cache
     //todo: imgui overlay
@@ -507,7 +507,7 @@ void VulkanApp::createGraphicPipeline()
     */
     vk::PipelineLayoutCreateInfo pipelineLayoutInfo{ 
         .setLayoutCount = 1, 
-        .pSetLayouts = &*descriptorSetLayout,
+        .pSetLayouts = &*descriptorSetLayoutComposition,
         .pushConstantRangeCount = 0 
     };
     pipelineLayout = vk::raii::PipelineLayout(deviceVK->logicDevice, pipelineLayoutInfo);
@@ -570,6 +570,18 @@ void VulkanApp::createGraphicPipeline()
         .module = mrtShaderModule,
         .pName = "fragMain"
     };
+
+    std::array setLayouts = {
+        *descriptorSetLayoutOffScreenUBO,
+        *descriptorSetLayoutOffScreenMat
+    };
+    vk::PipelineLayoutCreateInfo pipelineLayoutInfoOffscreen{
+        .setLayoutCount = setLayouts.size(),
+        .pSetLayouts = setLayouts.data(),
+        .pushConstantRangeCount = 0
+    };
+    pipelineLayout = vk::raii::PipelineLayout(deviceVK->logicDevice, pipelineLayoutInfoOffscreen);
+    pipelineCI.layout = pipelineLayout;
 
     std::array<vk::PipelineShaderStageCreateInfo, 2> mrtShaderStages = { mrtVertShaderStageInfo , mrtFragShaderStageInfo };
     pipelineCI.renderPass = offScreenFramebuffer.renderPass;
@@ -675,13 +687,36 @@ void VulkanApp::recordCommandBuffer(uint32_t imageIndex)
 
         for (int i = 0; i < models.size(); ++i)
         {
-            std::array offScreenDescriptors = {
-                descriptorSets[currentFrame].modelUBOs[i],
-            };
+            commandBuffers[currentFrame].bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipelineLayout, 0, *descriptorSets[currentFrame].modelUBOs[i], nullptr);
+            models[i].draw(commandBuffers[currentFrame], RenderFlags::BindImages, pipelineLayout, 1);
         }
 
-        
-        //models.Floor.draw(cmdBuffer);
+        commandBuffers[currentFrame].end();
+    }
+
+    // Second render pass: Composition
+    // Note: Explicit synchronization is not required between the render pass, as this is done implicit via sub pass dependencies
+    {
+        std::array < vk::ClearValue, 4> clearValues{
+            vk::ClearColorValue(0.0f, 0.0f, 0.2f, 0.0f),
+            vk::ClearDepthStencilValue(1.0f, 0)
+        };
+
+        vk::RenderPassBeginInfo renderPassbeginInfo{
+            .renderPass = offScreenFramebuffer.renderPass,
+            .framebuffer = offScreenFramebuffer.framebuffer,
+            .renderArea = {.offset = { 0, 0 }, .extent = { offScreenFramebuffer.width, offScreenFramebuffer.height } },
+            .clearValueCount = static_cast<uint32_t>(clearValues.size()),
+            .pClearValues = clearValues.data()
+        };
+
+        commandBuffers[currentFrame].beginRenderPass(renderPassbeginInfo, vk::SubpassContents::eInline);
+        commandBuffers[currentFrame].setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(WIDTH), static_cast<float>(HEIGHT), 0.0f, 1.0f));
+        commandBuffers[currentFrame].setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), vk::Extent2D(WIDTH, HEIGHT)));
+        commandBuffers[currentFrame].bindPipeline(vk::PipelineBindPoint::eGraphics, *pipelines.composition);
+        commandBuffers[currentFrame].bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipelineLayout, 0, *descriptorSets[currentFrame].composition, nullptr);
+        commandBuffers[currentFrame].draw(3, 1, 0, 0);
+        commandBuffers[currentFrame].end();
     }
 }
 
@@ -801,15 +836,6 @@ void VulkanApp::drawFrame()
             signaled when the command buffers finish execution
         */
         *inFlightFences[currentFrame]);
-
-    //vk::SubpassDependency dependency{
-    //    .srcSubpass = VK_SUBPASS_EXTERNAL,  // The special value VK_SUBPASS_EXTERNAL refers to the implicit subpass before or after the render pass depending on whether it is specified in srcSubpass or dstSubpass. 
-    //    .dstSubpass = {},  // The index 0 refers to our subpass, which is the first and only one. The dstSubpass must always be higher than srcSubpass to prevent cycles in the dependency graph (unless one of the subpasses is **VK_SUBPASS_EXTERNAL**).
-    //    .srcStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput,
-    //    .dstStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput,
-    //    .srcAccessMask = {},
-    //    .dstAccessMask = vk::AccessFlagBits::eColorAttachmentWrite
-    //};
 
     const vk::PresentInfoKHR presentInfoKHR{
         .waitSemaphoreCount = 1,
@@ -1008,17 +1034,18 @@ void VulkanApp::createDescriptorSets()
                 .pBindings = bindings.data()
             };
 
-            vk::raii::DescriptorSetLayout descriptorSetLayoutOffScreenUBO = deviceVK->logicDevice.createDescriptorSetLayout(layoutInfo);
+            descriptorSetLayoutOffScreenUBO = deviceVK->logicDevice.createDescriptorSetLayout(layoutInfo);
             vk::DescriptorSetAllocateInfo allocInfo{
                 .descriptorPool = descriptorPool,
                 .descriptorSetCount = 1,
                 .pSetLayouts = &*descriptorSetLayoutOffScreenUBO
             };
 
-            descriptorSets[i].modelUBOs.resize(models.size(), nullptr);
-            for (int j = 0; j < descriptorSets[i].modelUBOs.size(); ++j)
+            descriptorSets[i].modelUBOs.clear();
+            for (int j = 0; j < models.size(); ++j)
             {
-                descriptorSets[i].modelUBOs[j] = std::move(deviceVK->logicDevice.allocateDescriptorSets(allocInfo)[0]);
+
+                descriptorSets[i].modelUBOs.push_back(std::move(deviceVK->logicDevice.allocateDescriptorSets(allocInfo)[0]));
                 vk::DescriptorBufferInfo descriptor{
                     .buffer = uniformBuffers[i].offscreen.uniformBuffer,
                     .offset = 0,
@@ -1049,10 +1076,10 @@ void VulkanApp::createDescriptorSets()
                 },
                 vk::DescriptorSetLayoutBinding {
                     .binding = 1,
-                        .descriptorType = vk::DescriptorType::eCombinedImageSampler,
-                        .descriptorCount = 1,
-                        .stageFlags = vk::ShaderStageFlagBits::eFragment,
-                        .pImmutableSamplers = nullptr
+                    .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+                    .descriptorCount = 1,
+                    .stageFlags = vk::ShaderStageFlagBits::eFragment,
+                    .pImmutableSamplers = nullptr
                 },
                 vk::DescriptorSetLayoutBinding{
                     .binding = 2,
@@ -1073,7 +1100,7 @@ void VulkanApp::createDescriptorSets()
                 .bindingCount = static_cast<uint32_t>(bindings.size()),
                 .pBindings = bindings.data()
             };
-            vk::raii::DescriptorSetLayout descriptorSetLayoutComposition = deviceVK->logicDevice.createDescriptorSetLayout(layoutInfo);
+            descriptorSetLayoutComposition = deviceVK->logicDevice.createDescriptorSetLayout(layoutInfo);
 
             vk::DescriptorSetAllocateInfo allocInfo{
                 .descriptorPool = descriptorPool,
@@ -1091,7 +1118,7 @@ void VulkanApp::createDescriptorSets()
                 };
                 vk::WriteDescriptorSet descriptorWrite{
                     .dstSet = descriptorSets[i].composition,
-                    .dstBinding = writeDescriptorSets.size(),
+                    .dstBinding = static_cast<uint32_t>(writeDescriptorSets.size()),
                     .dstArrayElement = 0,
                     .descriptorCount = 1,
                     .descriptorType = vk::DescriptorType::eCombinedImageSampler,
@@ -1108,7 +1135,7 @@ void VulkanApp::createDescriptorSets()
                 };
                 vk::WriteDescriptorSet descriptorWrite{
                     .dstSet = descriptorSets[i].composition,
-                    .dstBinding = writeDescriptorSets.size(),
+                    .dstBinding = static_cast<uint32_t>(writeDescriptorSets.size()),
                     .dstArrayElement = 0,
                     .descriptorCount = 1,
                     .descriptorType = vk::DescriptorType::eCombinedImageSampler,
@@ -1125,7 +1152,7 @@ void VulkanApp::createDescriptorSets()
                 };
                 vk::WriteDescriptorSet descriptorWrite{
                     .dstSet = descriptorSets[i].composition,
-                    .dstBinding = writeDescriptorSets.size(),
+                    .dstBinding = static_cast<uint32_t>(writeDescriptorSets.size()),
                     .dstArrayElement = 0,
                     .descriptorCount = 1,
                     .descriptorType = vk::DescriptorType::eCombinedImageSampler,
@@ -1138,11 +1165,11 @@ void VulkanApp::createDescriptorSets()
                 vk::DescriptorBufferInfo descriptor{
                     .buffer = uniformBuffers[i].composition.uniformBuffer,
                     .offset = 0,
-                    .range = sizeof(UniformDataOffscreen)
+                    .range = sizeof(UniformDataComposition)
                 };
                 vk::WriteDescriptorSet descriptorWrite{
                     .dstSet = descriptorSets[i].composition,
-                    .dstBinding = writeDescriptorSets.size(),
+                    .dstBinding = static_cast<uint32_t>(writeDescriptorSets.size()),
                     .dstArrayElement = 0,
                     .descriptorCount = 1,
                     .descriptorType = vk::DescriptorType::eUniformBuffer,
@@ -1191,7 +1218,7 @@ void VulkanApp::createDescriptorSets()
         .bindingCount = static_cast<uint32_t>(bindings.size()),
         .pBindings = bindings.data()
     };
-    vk::raii::DescriptorSetLayout descriptorSetLayoutOffScreenMat = deviceVK->logicDevice.createDescriptorSetLayout(layoutInfo);
+    descriptorSetLayoutOffScreenMat = deviceVK->logicDevice.createDescriptorSetLayout(layoutInfo);
     for (int i = 0; i < models.size(); ++i)
     {
         models[i].createDescriptorSet(descriptorPool, descriptorSetLayoutOffScreenMat);
@@ -1425,15 +1452,18 @@ void VulkanApp::createOffScreenFramebuffer()
     */
 
     // (World space) Positions
-    createAttachment(vk::Format::eR16G16B16A16Sfloat, vk::ImageUsageFlagBits::eColorAttachment, &offScreenFramebuffer.position);
+    offScreenFramebuffer.position.format = vk::Format::eR16G16B16A16Sfloat;
+    createAttachment(vk::ImageUsageFlagBits::eColorAttachment, &offScreenFramebuffer.position);
     // (World space) Normals
-    createAttachment(vk::Format::eR16G16B16A16Sfloat, vk::ImageUsageFlagBits::eColorAttachment, &offScreenFramebuffer.normal);
+    offScreenFramebuffer.normal.format = vk::Format::eR16G16B16A16Sfloat;
+    createAttachment(vk::ImageUsageFlagBits::eColorAttachment, &offScreenFramebuffer.normal);
     // Albedo (color)
-    createAttachment(vk::Format::eR8G8B8A8Unorm, vk::ImageUsageFlagBits::eColorAttachment, &offScreenFramebuffer.albedo);
+    offScreenFramebuffer.albedo.format = vk::Format::eR8G8B8A8Unorm;
+    createAttachment(vk::ImageUsageFlagBits::eColorAttachment, &offScreenFramebuffer.albedo);
 
     // Depth attachment
-    auto depthFormat = findDepthFormat();
-    createAttachment(depthFormat, vk::ImageUsageFlagBits::eDepthStencilAttachment, &offScreenFramebuffer.depth);
+    offScreenFramebuffer.depth.format = findDepthFormat();
+    createAttachment(vk::ImageUsageFlagBits::eDepthStencilAttachment, &offScreenFramebuffer.depth);
 
     // Set up separate renderpass with references to the color and depth attachments
     std::array<vk::AttachmentDescription, 4> attachmentDescs = {};
@@ -1560,7 +1590,7 @@ void VulkanApp::createOffScreenFramebuffer()
     colorSampler = deviceVK->logicDevice.createSampler(samplerInfo);
 }
 
-void VulkanApp::createAttachment(vk::Format format, vk::ImageUsageFlagBits usage, FramebufferAttachment* attachment)
+void VulkanApp::createAttachment(vk::ImageUsageFlagBits usage, FramebufferAttachment* attachment)
 {
     vk::ImageAspectFlags aspectMask{};
 
@@ -1572,14 +1602,15 @@ void VulkanApp::createAttachment(vk::Format format, vk::ImageUsageFlagBits usage
     if (usage & vk::ImageUsageFlagBits::eDepthStencilAttachment)
     {
         aspectMask = vk::ImageAspectFlagBits::eDepth;
-        if (format >= vk::Format::eD16UnormS8Uint)
+        if (attachment->format >= vk::Format::eD16UnormS8Uint)
             aspectMask = vk::ImageAspectFlagBits::eDepth | vk::ImageAspectFlagBits::eStencil;
     }
 
-    deviceVK->CreateImage(offScreenFramebuffer.width, offScreenFramebuffer.height, format, 1, vk::ImageTiling::eOptimal, usage | vk::ImageUsageFlagBits::eSampled, vk::MemoryPropertyFlagBits::eDeviceLocal, attachment->image, attachment->mem);
-    vk::ImageViewCreateInfo imageViewCreateInfo{ 
+    deviceVK->CreateImage(offScreenFramebuffer.width, offScreenFramebuffer.height, attachment->format, 1, vk::ImageTiling::eOptimal, usage | vk::ImageUsageFlagBits::eSampled, vk::MemoryPropertyFlagBits::eDeviceLocal, attachment->image, attachment->mem);
+    vk::ImageViewCreateInfo imageViewCreateInfo{
+        .image = attachment->image,
         .viewType = vk::ImageViewType::e2D, 
-        .format = format,
+        .format = attachment->format,
         .subresourceRange = { aspectMask, 0, 1, 0, 1 }
     };
     attachment->view = deviceVK->logicDevice.createImageView(imageViewCreateInfo);

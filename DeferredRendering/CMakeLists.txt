@@ -1,6 +1,6 @@
 project(DeferredRendering)
 
-file(GLOB_RECURSE src CONFIGURE_DEPENDS "src/*.cpp" "include/*.h")
+file(GLOB_RECURSE src CONFIGURE_DEPENDS "src/*.cpp" "include/*.h" "include/*.hpp")
 
 add_executable(DeferredRendering ${src})
 setup_output_directories(DeferredRendering)

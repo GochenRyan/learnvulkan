@@ -2,9 +2,9 @@
     [[...]] is the attribute syntax of Slang, used to pass target-specific decorative information to the compiler/backend
     vk::binding(binding: int, set: int = 0) indicates binding this shader parameter to the Vulkan descriptor set/binding.
 */
-[[vk::binding(0, 1)]] Sampler2D samplerPosition;
-[[vk::binding(1, 1)]] Sampler2D samplerNormal;
-[[vk::binding(2, 1)]] Sampler2D smaplerAlbedo;
+[[vk::binding(0, 0)]] Sampler2D samplerPosition;
+[[vk::binding(1, 0)]] Sampler2D samplerNormal;
+[[vk::binding(2, 0)]] Sampler2D smaplerAlbedo;
 
 struct Light {
     float4 position;
@@ -19,7 +19,7 @@ struct UBO
     int displayDebugTarget;
 };
 
-[[vk::binding(3, 1)]] ConstantBuffer<UBO> ubo;
+[[vk::binding(3, 0)]] ConstantBuffer<UBO> ubo;
 
 struct VSOutput
 {

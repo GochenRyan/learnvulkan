@@ -79,7 +79,7 @@ void Texture::loadImage(std::string_view path, VulkanDevice* device, const vk::r
                 }
             };
             imageBlit.srcOffsets[1] = { int32_t(width >> (i - 1)), int32_t(height >> (i - 1)), 1 };
-            imageBlit.srcOffsets[1] = { int32_t(width >> i), int32_t(height >> i), 1 };
+            imageBlit.dstOffsets[1] = { int32_t(width >> i) > 0 ? int32_t(width >> i) : 1, int32_t(height >> i) > 0 ? int32_t(height >> i) : 1, 1 };
 
             vk::ImageSubresourceRange mipSubRange{
                 .aspectMask = vk::ImageAspectFlagBits::eColor,
@@ -202,7 +202,7 @@ void Model::createDescriptorSet(vk::raii::DescriptorPool& descriptorPool, vk::ra
             auto& texture = textureLookup[material.textureMap["BaseColor"]];
             vk::WriteDescriptorSet descriptorWrite{
                 .dstSet = material.descriptorSet,
-                .dstBinding = writeDescriptorSets.size(),
+                .dstBinding = static_cast<uint32_t>(writeDescriptorSets.size()),
                 .dstArrayElement = 0,
                 .descriptorCount = 1,
                 .descriptorType = vk::DescriptorType::eCombinedImageSampler,
@@ -215,7 +215,7 @@ void Model::createDescriptorSet(vk::raii::DescriptorPool& descriptorPool, vk::ra
             auto& texture = textureLookup[material.textureMap["Normal"]];
             vk::WriteDescriptorSet descriptorWrite{
                 .dstSet = material.descriptorSet,
-                .dstBinding = writeDescriptorSets.size(),
+                .dstBinding = static_cast<uint32_t>(writeDescriptorSets.size()),
                 .dstArrayElement = 0,
                 .descriptorCount = 1,
                 .descriptorType = vk::DescriptorType::eCombinedImageSampler,
@@ -228,7 +228,7 @@ void Model::createDescriptorSet(vk::raii::DescriptorPool& descriptorPool, vk::ra
             auto& texture = textureLookup[material.textureMap["Metallic"]];
             vk::WriteDescriptorSet descriptorWrite{
                 .dstSet = material.descriptorSet,
-                .dstBinding = writeDescriptorSets.size(),
+                .dstBinding = static_cast<uint32_t>(writeDescriptorSets.size()),
                 .dstArrayElement = 0,
                 .descriptorCount = 1,
                 .descriptorType = vk::DescriptorType::eCombinedImageSampler,
@@ -241,7 +241,7 @@ void Model::createDescriptorSet(vk::raii::DescriptorPool& descriptorPool, vk::ra
             auto& texture = textureLookup[material.textureMap["Roughness"]];
             vk::WriteDescriptorSet descriptorWrite{
                 .dstSet = material.descriptorSet,
-                .dstBinding = writeDescriptorSets.size(),
+                .dstBinding = static_cast<uint32_t>(writeDescriptorSets.size()),
                 .dstArrayElement = 0,
                 .descriptorCount = 1,
                 .descriptorType = vk::DescriptorType::eCombinedImageSampler,
@@ -789,4 +789,34 @@ void Model::createEmptyTexture(const vk::raii::Queue& transferQueue)
     emptyTexture.descriptor.sampler = emptyTexture.sampler;
     emptyTexture.descriptor.imageView = emptyTexture.view;
     emptyTexture.descriptor.imageLayout = emptyTexture.imageLayout;
+}
+
+void Model::drawNode(Node* node, vk::raii::CommandBuffer& commandBuffer, RenderFlags renderFlags, const vk::raii::PipelineLayout& pipelineLayout, uint32_t bindImageSet)
+{
+    if (node->mesh)
+    {
+        for (auto& primitive : node->mesh->primitives)
+        {
+            bool skip = false;
+            const auto& material = materialLookup[primitive.materialIndex];
+            commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipelineLayout, bindImageSet, *material.descriptorSet, nullptr);
+            commandBuffer.drawIndexed(primitive.indexCount, 3, primitive.firstIndex, 0, 0);
+        }
+    }
+
+    for (auto& childIndex : node->childIndices)
+    {
+        drawNode(&nodeLookup[childIndex], commandBuffer, renderFlags, pipelineLayout, bindImageSet);
+    }
+}
+
+void Model::draw(vk::raii::CommandBuffer& commandBuffer, RenderFlags renderFlags, const vk::raii::PipelineLayout& pipelineLayout, uint32_t bindImageSet)
+{
+    commandBuffer.bindVertexBuffers(0, *vertices.buffer, { 0 });
+    commandBuffer.bindIndexBuffer(*indices.buffer, 0, vk::IndexType::eUint32);
+
+    for (auto& node : nodeLookup)
+    {
+        drawNode(&node, commandBuffer, renderFlags, pipelineLayout, bindImageSet);
+    }
 }
