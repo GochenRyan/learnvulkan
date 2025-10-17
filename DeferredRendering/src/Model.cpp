@@ -363,6 +363,27 @@ bool Model::loadFromFile(std::string filename, VulkanDevice* device, const vk::r
 
     loadNodeRecursively(root, nullptr);
 
+    size_t vertexBufferSize = vertexLookup.size() * sizeof(Vertex);
+    size_t indexBufferSize = indexLookup.size() * sizeof(uint32_t);
+
+    assert((vertexBufferSize > 0) && "vertex buffer size = 0");
+    assert((indexBufferSize > 0) && "index buffer size = 0");
+
+    struct StageingBuffer
+    {
+        vk::raii::Buffer buffer = nullptr;
+        vk::raii::DeviceMemory memory = nullptr;
+    } vertexStaging{}, indexStaging{};
+
+    deviceVK->CreateBuffer(vertexBufferSize, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, vertexStaging.buffer, vertexStaging.memory, vertexLookup.data());
+    deviceVK->CreateBuffer(indexBufferSize, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, indexStaging.buffer, indexStaging.memory, indexLookup.data());
+
+    deviceVK->CreateBuffer(vertexBufferSize, vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eTransferDst, vk::MemoryPropertyFlagBits::eDeviceLocal, vertices.buffer, vertices.memory);
+    deviceVK->CreateBuffer(indexBufferSize, vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eIndexBuffer, vk::MemoryPropertyFlagBits::eDeviceLocal, indices.buffer, indices.memory);
+
+    deviceVK->copyBuffer(vertexStaging.buffer, vertices.buffer, vertexBufferSize, transferQueue);
+    deviceVK->copyBuffer(indexStaging.buffer, indices.buffer, indexBufferSize, transferQueue);
+
     scene->Destroy();
     manager->Destroy();
 

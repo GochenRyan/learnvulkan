@@ -34,7 +34,7 @@ uint32_t VulkanDevice::FindMemoryType(uint32_t typeFilter, vk::MemoryPropertyFla
     throw std::runtime_error("failed to find suitable memory type!");
 }
 
-void VulkanDevice::CreateBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage, vk::MemoryPropertyFlags properties, vk::raii::Buffer& buffer, vk::raii::DeviceMemory& bufferMemory)
+void VulkanDevice::CreateBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage, vk::MemoryPropertyFlags properties, vk::raii::Buffer& buffer, vk::raii::DeviceMemory& bufferMemory, void* data)
 {
     vk::BufferCreateInfo bufferInfo{
         // used to configure sparse buffer memory,
@@ -71,6 +71,13 @@ void VulkanDevice::CreateBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage,
     */
     bufferMemory = logicDevice.allocateMemory(memoryAllocateInfo);
     buffer.bindMemory(*bufferMemory, /* the offset within the region of memory. If the offset is non-zero, then it is required to be divisible by memRequirements.alignment. */0);
+
+    if (data != nullptr)
+    {
+        void* mapped = bufferMemory.mapMemory(0, size);
+        memcpy(mapped, data, size);
+        bufferMemory.unmapMemory();
+    }
 }
 
 void VulkanDevice::CreateImage(uint32_t width, uint32_t height, vk::Format format, uint32_t miplevels, vk::ImageTiling tiling, vk::ImageUsageFlags usage, vk::MemoryPropertyFlags properties, vk::raii::Image& image, vk::raii::DeviceMemory& imageMemory)
@@ -267,4 +274,11 @@ void VulkanDevice::copyBufferToImage(const vk::raii::Buffer& buffer, vk::raii::I
     };
     commandBuffer->copyBufferToImage(buffer, image, vk::ImageLayout::eTransferDstOptimal, { region });
     endSingleTimeCommands(*commandBuffer, queue);
+}
+
+void VulkanDevice::copyBuffer(vk::raii::Buffer& srcBuffer, vk::raii::Buffer& dstBuffer, vk::DeviceSize size, const vk::raii::Queue& queue)
+{
+    auto commandCopyBuffer = beginSingleTimeCommands();
+    commandCopyBuffer->copyBuffer(srcBuffer, dstBuffer, vk::BufferCopy(0, 0, size));
+    endSingleTimeCommands(*commandCopyBuffer, queue);
 }

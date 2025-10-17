@@ -31,14 +31,6 @@ public:
         return keys.left || keys.right || keys.up || keys.down;
     }
 
-    float getNearClip() const {
-        return znear;
-    }
-
-    float getFarClip() const {
-        return zfar;
-    }
-
     void setPerspective(float fov, float aspect, float znear, float zfar)
     {
         glm::mat4 currentMatrix = matrices.perspective;
@@ -166,37 +158,14 @@ private:
             updated = true;
         }
     };
-private:
-    float fov{};
-    float znear{};
-    float zfar{};
-
-    glm::vec3 rotation = glm::vec3();
-    glm::vec3 position = glm::vec3();
-    
+public:
     struct
     {
         glm::mat4 perspective;
         glm::mat4 view;
     } matrices;
-private:
+
     CameraType type = CameraType::lookat;
-
-    glm::vec3 rotation = glm::vec3();
-    glm::vec3 position = glm::vec3();
-    glm::vec4 viewPos = glm::vec4();
-
-    float rotationSpeed = 1.0f;
-    float movementSpeed = 1.0f;
-
-    bool updated = true;
-    bool flipY = false;
-
-    struct
-    {
-        glm::mat4 perspective;
-        glm::mat4 view;
-    } matrices;
 
     struct
     {
@@ -205,4 +174,18 @@ private:
         bool up = false;
         bool down = false;
     } keys;
+
+    float rotationSpeed = 1.0f;
+    float movementSpeed = 1.0f;
+private:
+    float fov{};
+    float znear{};
+    float zfar{};
+private:
+    glm::vec3 rotation = glm::vec3();
+    glm::vec3 position = glm::vec3();
+    glm::vec4 viewPos = glm::vec4();
+
+    bool updated = true;
+    bool flipY = false;
 };

@@ -56,6 +56,12 @@ static void framebufferResizeCallback(GLFWwindow* window, int width, int height)
     app->framebufferResized = true;
 }
 
+static void mouseMovementCallback(GLFWwindow* window, double xpos, double ypos)
+{
+    auto app = reinterpret_cast<VulkanApp*>(glfwGetWindowUserPointer(window));
+    app->camera.rotate(glm::vec3(-ypos * app->camera.rotationSpeed, xpos * app->camera.rotationSpeed, 0.0f));
+}
+
 vk::Extent2D VulkanApp::chooseSwapExtent(const vk::SurfaceCapabilitiesKHR& capabilities)
 {
     /*
@@ -127,7 +133,7 @@ void VulkanApp::Run()
 {
     initWindow();
     initVulkan();
-    // mainLoop();
+    mainLoop();
     cleanup();
 }
 
@@ -138,6 +144,11 @@ void VulkanApp::initWindow()
     window = glfwCreateWindow(WIDTH, HEIGHT, "Vulkan", nullptr, nullptr);
     glfwSetWindowUserPointer(window, this);
     glfwSetFramebufferSizeCallback(window, framebufferResizeCallback);
+
+    // Set the mouse input mode to disabled
+    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+    // Set the mouse movement callback
+    glfwSetCursorPosCallback(window, mouseMovementCallback);
 }
 
 void VulkanApp::initVulkan()
@@ -150,14 +161,15 @@ void VulkanApp::initVulkan()
     createLogicalDevice();
     createCommandPool();
     createCommandBuffers();
-    createSyncObjects();
     createSwapChain();
     createSwapChainImageViews();
+    createSyncObjects();
     createDepthResources();
     createRenderPass();
     //todo: Pipline Cache
     //todo: imgui overlay
     createFramebuffers();
+    createCamera();
 
     loadModel();
     createOffScreenFramebuffer();
@@ -171,7 +183,13 @@ void VulkanApp::mainLoop()
     while (!glfwWindowShouldClose(window))
     {
         glfwPollEvents();
+        auto tStart = std::chrono::high_resolution_clock::now();
         drawFrame();
+        auto tEnd = std::chrono::high_resolution_clock::now();
+        auto tDiff = std::chrono::duration<double, std::milli>(tEnd - tStart).count();
+        handleInput();
+        frameTimer = (float)tDiff / 1000.0f;
+        camera.update(frameTimer);
     }
 
     deviceVK->logicDevice.waitIdle();
@@ -510,7 +528,7 @@ void VulkanApp::createGraphicPipeline()
         .pSetLayouts = &*descriptorSetLayoutComposition,
         .pushConstantRangeCount = 0 
     };
-    pipelineLayout = vk::raii::PipelineLayout(deviceVK->logicDevice, pipelineLayoutInfo);
+    pipelineLayoutComposition = vk::raii::PipelineLayout(deviceVK->logicDevice, pipelineLayoutInfo);
 
     vk::PipelineVertexInputStateCreateInfo emptyInputState{};
 
@@ -525,7 +543,7 @@ void VulkanApp::createGraphicPipeline()
         .pDepthStencilState = &depthStencil,
         .pColorBlendState = &colorBlendingInfo,
         .pDynamicState = &dynamicStateInfo,
-        .layout = *pipelineLayout,
+        .layout = *pipelineLayoutComposition,
         .renderPass = *renderPass,
         /*
              Vulkan allows you to create a new graphics pipeline by deriving from an existing pipeline. 
@@ -580,10 +598,12 @@ void VulkanApp::createGraphicPipeline()
         .pSetLayouts = setLayouts.data(),
         .pushConstantRangeCount = 0
     };
-    pipelineLayout = vk::raii::PipelineLayout(deviceVK->logicDevice, pipelineLayoutInfoOffscreen);
-    pipelineCI.layout = pipelineLayout;
+    pipelineLayoutOffScreen = vk::raii::PipelineLayout(deviceVK->logicDevice, pipelineLayoutInfoOffscreen);
+    pipelineCI.layout = pipelineLayoutOffScreen;
 
     std::array<vk::PipelineShaderStageCreateInfo, 2> mrtShaderStages = { mrtVertShaderStageInfo , mrtFragShaderStageInfo };
+    pipelineCI.stageCount = mrtShaderStages.size();
+    pipelineCI.pStages = mrtShaderStages.data();
     pipelineCI.renderPass = offScreenFramebuffer.renderPass;
 
     std::array<vk::PipelineColorBlendAttachmentState, 3> blendAttachmentStates = {
@@ -593,6 +613,7 @@ void VulkanApp::createGraphicPipeline()
     };
     colorBlendingInfo.attachmentCount = static_cast<uint32_t>(blendAttachmentStates.size());
     colorBlendingInfo.pAttachments = blendAttachmentStates.data();
+    pipelineCI.pColorBlendState = &colorBlendingInfo;
 
     pipelines.offscreen = deviceVK->logicDevice.createGraphicsPipeline(nullptr, pipelineCI);
 }
@@ -687,11 +708,11 @@ void VulkanApp::recordCommandBuffer(uint32_t imageIndex)
 
         for (int i = 0; i < models.size(); ++i)
         {
-            commandBuffers[currentFrame].bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipelineLayout, 0, *descriptorSets[currentFrame].modelUBOs[i], nullptr);
-            models[i].draw(commandBuffers[currentFrame], RenderFlags::BindImages, pipelineLayout, 1);
+            commandBuffers[currentFrame].bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipelineLayoutOffScreen, 0, *descriptorSets[currentFrame].modelUBOs[i], nullptr);
+            models[i].draw(commandBuffers[currentFrame], RenderFlags::BindImages, pipelineLayoutOffScreen, 1);
         }
 
-        commandBuffers[currentFrame].end();
+        commandBuffers[currentFrame].endRenderPass();
     }
 
     // Second render pass: Composition
@@ -703,21 +724,23 @@ void VulkanApp::recordCommandBuffer(uint32_t imageIndex)
         };
 
         vk::RenderPassBeginInfo renderPassbeginInfo{
-            .renderPass = offScreenFramebuffer.renderPass,
-            .framebuffer = offScreenFramebuffer.framebuffer,
-            .renderArea = {.offset = { 0, 0 }, .extent = { offScreenFramebuffer.width, offScreenFramebuffer.height } },
+            .renderPass = renderPass,
+            .framebuffer = swapChainFramebuffers[imageIndex],
+            .renderArea = {.offset = { 0, 0 }, .extent = { swapChainExtent.width, swapChainExtent.height } },
             .clearValueCount = static_cast<uint32_t>(clearValues.size()),
             .pClearValues = clearValues.data()
         };
 
         commandBuffers[currentFrame].beginRenderPass(renderPassbeginInfo, vk::SubpassContents::eInline);
-        commandBuffers[currentFrame].setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(WIDTH), static_cast<float>(HEIGHT), 0.0f, 1.0f));
-        commandBuffers[currentFrame].setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), vk::Extent2D(WIDTH, HEIGHT)));
+        commandBuffers[currentFrame].setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(swapChainExtent.width), static_cast<float>(swapChainExtent.height), 0.0f, 1.0f));
+        commandBuffers[currentFrame].setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), vk::Extent2D(swapChainExtent.width, swapChainExtent.height)));
         commandBuffers[currentFrame].bindPipeline(vk::PipelineBindPoint::eGraphics, *pipelines.composition);
-        commandBuffers[currentFrame].bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipelineLayout, 0, *descriptorSets[currentFrame].composition, nullptr);
+        commandBuffers[currentFrame].bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipelineLayoutComposition, 0, *descriptorSets[currentFrame].composition, nullptr);
         commandBuffers[currentFrame].draw(3, 1, 0, 0);
-        commandBuffers[currentFrame].end();
+        commandBuffers[currentFrame].endRenderPass();
     }
+
+    commandBuffers[currentFrame].end();
 }
 
 void VulkanApp::transition_image_layout(uint32_t imageIndex, vk::ImageLayout oldLayout, vk::ImageLayout newLayout, vk::AccessFlags2 srcAccessMask, vk::AccessFlags2 dstAccessMask, vk::PipelineStageFlags2 srcStageMask, vk::PipelineStageFlags2 dstStageMask)
@@ -901,6 +924,8 @@ void VulkanApp::recreateSwapChain()
     createSwapChainImageViews();
     createDepthResources();
     createFramebuffers();
+
+    camera.setPerspective(60.0f, (float)swapChainExtent.width / (float)swapChainExtent.height, 0.1f, 256.0f);
 }
 
 void VulkanApp::cleanupSwapChain()
@@ -913,15 +938,6 @@ void VulkanApp::cleanupSwapChain()
     swapChainImageViews.clear();
     swapChain = nullptr;
 }
-
-
-void VulkanApp::copyBuffer(vk::raii::Buffer& srcBuffer, vk::raii::Buffer& dstBuffer, vk::DeviceSize size)
-{
-    auto commandCopyBuffer = deviceVK->beginSingleTimeCommands();
-    commandCopyBuffer->copyBuffer(srcBuffer, dstBuffer, vk::BufferCopy(0, 0, size));
-    deviceVK->endSingleTimeCommands(*commandCopyBuffer, queue);
-}
-
 
 void VulkanApp::createUniformBuffers()
 {
@@ -943,8 +959,8 @@ void VulkanApp::createUniformBuffers()
 
 void VulkanApp::updateUniformBufferOffscreen(uint32_t currentImage)
 {
-    //uniformDataOffscreen.projection = camera.matrices.perspective;
-    //uniformDataOffscreen.view = camera.matrices.view;
+    uniformDataOffscreen.projection = camera.matrices.perspective;
+    uniformDataOffscreen.view = camera.matrices.view;
     uniformDataOffscreen.model = glm::mat4(1.0f);
     memcpy(uniformBuffers[currentImage].offscreen.uniformBuffersMapped, &uniformDataOffscreen, sizeof(UniformDataOffscreen));
 }
@@ -1025,7 +1041,7 @@ void VulkanApp::createDescriptorSets()
                     .binding = 0,
                     .descriptorType = vk::DescriptorType::eUniformBuffer,
                     .descriptorCount = 1,
-                    .stageFlags = vk::ShaderStageFlagBits::eFragment,
+                    .stageFlags = vk::ShaderStageFlagBits::eVertex,
                     .pImmutableSamplers = nullptr
                 }
             };
@@ -1379,15 +1395,6 @@ void VulkanApp::createRenderPass()
         .layout = vk::ImageLayout::eDepthStencilAttachmentOptimal
     };
 
-    vk::SubpassDependency dependency{
-        .srcSubpass = vk::SubpassExternal,
-        .dstSubpass = 0,
-        .srcStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput | vk::PipelineStageFlagBits::eLateFragmentTests,
-        .dstStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput | vk::PipelineStageFlagBits::eEarlyFragmentTests,
-        .srcAccessMask = vk::AccessFlagBits::eDepthStencilAttachmentWrite,
-        .dstAccessMask = vk::AccessFlagBits::eColorAttachmentWrite | vk::AccessFlagBits::eDepthStencilAttachmentWrite
-    };
-
     vk::SubpassDescription subpass{
         .pipelineBindPoint = vk::PipelineBindPoint::eGraphics,
         .colorAttachmentCount = 1,
@@ -1401,14 +1408,33 @@ void VulkanApp::createRenderPass()
         .pDepthStencilAttachment = &depthAttachmentRef
     };
 
+    std::array dependencies = {
+        vk::SubpassDependency {
+            .srcSubpass = vk::SubpassExternal,
+            .dstSubpass = 0,
+            .srcStageMask = vk::PipelineStageFlagBits::eEarlyFragmentTests | vk::PipelineStageFlagBits::eLateFragmentTests,
+            .dstStageMask = vk::PipelineStageFlagBits::eEarlyFragmentTests | vk::PipelineStageFlagBits::eLateFragmentTests,
+            .srcAccessMask = vk::AccessFlagBits::eDepthStencilAttachmentWrite,
+            .dstAccessMask = vk::AccessFlagBits::eDepthStencilAttachmentRead | vk::AccessFlagBits::eDepthStencilAttachmentWrite
+        },
+        vk::SubpassDependency {
+            .srcSubpass = vk::SubpassExternal,
+            .dstSubpass = 0,
+            .srcStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput,
+            .dstStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput,
+            .srcAccessMask = vk::AccessFlagBits::eNone,
+            .dstAccessMask = vk::AccessFlagBits::eColorAttachmentRead | vk::AccessFlagBits::eColorAttachmentWrite
+        }
+    };
+
     std::array<vk::AttachmentDescription, 2> attachments = { colorAttachment, depthAttachment };
     vk::RenderPassCreateInfo renderPassInfo{
         .attachmentCount = static_cast<uint32_t>(attachments.size()),
         .pAttachments = attachments.data(),
         .subpassCount = 1,
         .pSubpasses = &subpass,
-        .dependencyCount = 1,
-        .pDependencies = &dependency
+        .dependencyCount = dependencies.size(),
+        .pDependencies = dependencies.data()
     };
 
     renderPass = deviceVK->logicDevice.createRenderPass(renderPassInfo);
@@ -1433,6 +1459,15 @@ void VulkanApp::createFramebuffers()
         };
         swapChainFramebuffers.push_back(std::move(deviceVK->logicDevice.createFramebuffer(framebufferInfo)));
     }
+}
+
+void VulkanApp::createCamera()
+{
+    camera.type = CameraType::firstperson;
+    camera.setMovementSpeed(5.0f);
+    camera.setPosition({ 2.15f, 0.3f, -8.75f });
+    camera.setRotation(glm::vec3(-0.75f, 12.5f, 0.0f));
+    camera.setPerspective(60.0f, (float)swapChainExtent.width / (float)swapChainExtent.height, 0.1f, 256.0f);
 }
 
 void VulkanApp::createOffScreenFramebuffer()
@@ -1614,4 +1649,31 @@ void VulkanApp::createAttachment(vk::ImageUsageFlagBits usage, FramebufferAttach
         .subresourceRange = { aspectMask, 0, 1, 0, 1 }
     };
     attachment->view = deviceVK->logicDevice.createImageView(imageViewCreateInfo);
+}
+
+void VulkanApp::handleInput()
+{
+    // Forward / Backward
+    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
+    {
+        camera.keys.up = true;
+        camera.keys.down = false;
+    }
+    else if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
+    {
+        camera.keys.down = true;
+        camera.keys.up = false;
+    }
+
+    // Left / Right
+    if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
+    {
+        camera.keys.left = true;
+        camera.keys.right = false;
+    }
+    else if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
+    {
+        camera.keys.right = true;
+        camera.keys.left = false;
+    }
 }

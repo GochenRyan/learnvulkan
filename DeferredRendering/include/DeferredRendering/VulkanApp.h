@@ -1,4 +1,5 @@
 #pragma once
+#include <DeferredRendering/Camera.hpp>
 #include <DeferredRendering/Model.h>
 #include <DeferredRendering/VulkanBuffer.h>
 #include <DeferredRendering/VulkanDevice.h>
@@ -87,6 +88,7 @@ private:
     void createSwapChainImageViews();
     void createRenderPass();
     void createFramebuffers();
+    void createCamera();
 private:
     bool loadModel();
     void createOffScreenFramebuffer();
@@ -106,7 +108,6 @@ private:
     std::vector<char> readFile(std::string_view filePath);
     [[nodiscard]] vk::raii::ShaderModule createShaderModule(const std::vector<char>& code) const;
     void transition_image_layout(uint32_t imageIndex, vk::ImageLayout oldLayout, vk::ImageLayout newLayout, vk::AccessFlags2 srcAccessMask, vk::AccessFlags2 dstAccessMask, vk::PipelineStageFlags2 srcStageMask, vk::PipelineStageFlags2 dstStageMask);
-    void copyBuffer(vk::raii::Buffer& srcBuffer, vk::raii::Buffer& dstBuffer, vk::DeviceSize size);
 
     void updateUniformBufferOffscreen(uint32_t currentImage);
     void updateUniformBufferComposition(uint32_t currentFrame);
@@ -117,6 +118,7 @@ private:
     vk::Format findDepthFormat();
     bool hasStencilComponent(vk::Format format);
     void createAttachment(vk::ImageUsageFlagBits usage, FramebufferAttachment* attachment);
+    void handleInput();
 private:
     GLFWwindow* window{ nullptr };
 
@@ -131,6 +133,7 @@ private:
         vk::KHRCreateRenderpass2ExtensionName  // The creation interface for "Render Pass" has been expanded and improved, allowing you to specify more abundant subpass dependencies and attachment state transitions at one time during creation.
     };
 
+    std::unique_ptr<VulkanDevice> deviceVK = nullptr;
     vk::raii::Queue queue{ nullptr };
 
     // KHR: Khronos
@@ -143,7 +146,8 @@ private:
 
     std::vector<vk::raii::ImageView> swapChainImageViews;
 
-    vk::raii::PipelineLayout pipelineLayout = nullptr;
+    vk::raii::PipelineLayout pipelineLayoutOffScreen = nullptr;
+    vk::raii::PipelineLayout pipelineLayoutComposition = nullptr;
     std::vector<vk::raii::CommandBuffer> commandBuffers;
 
     std::vector<vk::raii::Semaphore> presentCompleteSemaphores;
@@ -203,8 +207,6 @@ private:
 
     std::vector<Model> models;
 
-    std::unique_ptr<VulkanDevice> deviceVK = nullptr;
-
     struct DescriptorSets
     {
         std::vector<vk::raii::DescriptorSet> modelUBOs;
@@ -216,12 +218,14 @@ private:
     vk::raii::DescriptorSetLayout descriptorSetLayoutOffScreenMat = nullptr;
 
     std::array<DescriptorSets, MAX_FRAMES_IN_FLIGHT> descriptorSets;
+    float frameTimer{ 1.0f };
 public:
     /*
         Although many drivers and platforms trigger VK_ERROR_OUT_OF_DATE_KHR automatically after a window resize, it is not guaranteed to happen. 
         That's why we'll add some extra code to also handle resizes explicitly. 
     */
     bool framebufferResized = false;
-
     int32_t debugDisplayTarget = 0;
+
+    Camera camera;
 };
