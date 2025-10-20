@@ -132,8 +132,8 @@ void GetFBXAttributeValue(const FbxLayerElementTemplate<T1>* element, std::vecto
         for (int f = 0; f < indexCount; ++f)
         {
             int index = (element->GetReferenceMode() == FbxGeometryElement::eDirect)
-                ? indices[f]
-                : element->GetIndexArray().GetAt(indices[f]);
+                ? f
+                : element->GetIndexArray().GetAt(f);
             output[f] = FBXToGLMType(element->GetDirectArray().GetAt(index));
         }
     }
@@ -145,8 +145,8 @@ void GetFBXAttributeValue(const FbxLayerElementTemplate<T1>* element, std::vecto
             for (uint32_t e = 0; e < polygonSizes[f]; e++, wedgeIndex++)
             {
                 int index = (element->GetReferenceMode() == FbxGeometryElement::eDirect)
-                    ? indices[f]
-                    : element->GetIndexArray().GetAt(indices[f]);
+                    ? f
+                    : element->GetIndexArray().GetAt(f);
                 output[wedgeIndex] = FBXToGLMType(element->GetDirectArray().GetAt(index));
             }
         }
@@ -154,8 +154,8 @@ void GetFBXAttributeValue(const FbxLayerElementTemplate<T1>* element, std::vecto
     else if (mappingMode == FbxLayerElement::eAllSame)
     {
         int index = (element->GetReferenceMode() == FbxGeometryElement::eDirect)
-            ? indices[0]
-            : element->GetIndexArray().GetAt(indices[0]);
+            ? 0
+            : element->GetIndexArray().GetAt(0);
         T2 value = FBXToGLMType(element->GetDirectArray().GetAt(index));
         for (int f = 0; f < indexCount; f++)
             output[f] = value;

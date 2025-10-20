@@ -560,7 +560,7 @@ void Model::loadNodeRecursively(FbxNode* fbxNode, Node* parent)
                 auto binormal = glm::cross(groupNorms[i], tangent);
                 float sign = glm::dot(binormal, binormals[i]);
 
-                groupTangents[i] = glm::vec4(tangent, sign > 0 ? 1.f : -1.f);
+                groupTangents[i] = glm::vec4(glm::normalize(tangent), sign > 0 ? 1.f : -1.f);
             }
         }
 
@@ -578,7 +578,7 @@ void Model::loadNodeRecursively(FbxNode* fbxNode, Node* parent)
 
             groupUVs[uvsetIndex].resize(polygonIndexCount);
             GetFBXAttributeValue(fbxUVs, groupUVs[uvsetIndex], indices, polygonIndexCount, polygonSizes, polygonCount, vertexCount, glm::zero<glm::vec2>());
-            for (size_t j = 0; j < polygonCount; ++j)
+            for (size_t j = 0; j < polygonIndexCount; ++j)
             {
                 if (flipV)
                 {
@@ -630,12 +630,13 @@ void Model::loadNodeRecursively(FbxNode* fbxNode, Node* parent)
                         {
                             if (vertices[k].pos == v.pos)
                             {
-                                if (vertexSmGroupLookup[k] == triangleSmGroupLookup[i])
+                                if (triangleSmGroupLookup[i] != -1 && vertexSmGroupLookup[k] == triangleSmGroupLookup[i])
                                 {
                                     vertices[k].normal += v.normal;
                                     assert(vertices[k].tangent[3] * v.tangent[3] > 0 && "the w component of the tangent is incorrect.");
-                                    vertices[k].tangent += v.tangent;
+                                    vertices[k].tangent += glm::vec4(v.tangent.x, v.tangent.y, v.tangent.z, 0.f);
 
+                                    //todo
                                     v.normal = vertices[k].normal;
                                     v.tangent = vertices[k].tangent;
                                 }
@@ -648,7 +649,7 @@ void Model::loadNodeRecursively(FbxNode* fbxNode, Node* parent)
                         {
                             if (vertices[k].pos == v.pos)
                             {
-                                if (vertexSmGroupLookup[k] == triangleSmGroupLookup[i])
+                                if (triangleSmGroupLookup[i] != -1 && vertexSmGroupLookup[k] == triangleSmGroupLookup[i])
                                 {
                                     int uvSet = 0;
                                     for (uvSet = 0; uvSet < MAX_UV_SETS; uvSet++)
@@ -681,6 +682,14 @@ void Model::loadNodeRecursively(FbxNode* fbxNode, Node* parent)
                 }
             }
 
+            for (auto& vertex : vertices)
+            {
+                vertex.normal = glm::normalize(vertex.normal);
+                auto T = glm::vec3(vertex.tangent.x, vertex.tangent.y, vertex.tangent.z);
+                T = glm::normalize(T - vertex.normal * glm::dot(vertex.normal, T));
+                vertex.tangent = glm::vec4(T.x, T.y, T.z, vertex.tangent.w);
+            }
+
             Primitive primitive;
             size_t oldSize = vertexLookup.size();
             primitive.firstVertex = oldSize;
@@ -694,6 +703,8 @@ void Model::loadNodeRecursively(FbxNode* fbxNode, Node* parent)
             primitive.materialIndex = mi;
             node.mesh->primitives.push_back(primitive);
         }
+
+
 
         for (size_t i = 0; i < fbxNode->GetChildCount(); ++i)
         {

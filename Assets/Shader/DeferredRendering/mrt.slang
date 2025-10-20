@@ -9,10 +9,10 @@
 
 struct VSInput
 {
-    float4 Pos;
+    float3 Pos;
     float3 Normal;
-    float3 Tangent;
-    float3 Color;
+    float4 Tangent;
+    float4 Color;
     float2 UV0;
     float2 UV1;
     float2 UV2;
@@ -28,10 +28,10 @@ struct VSOutput
     float4 Pos : SV_Position;
     float3 Normal;
     float2 UV;
-    float3 Color;
+    float4 Color;
     float3 WorldPos;
     // The Tangent (tangent line) is a direction vector at a vertex, used together with the normal to define the "tangent space" (TBN)
-    float3 Tangent;
+    float4 Tangent;
 };
 
 struct FSOutput
@@ -56,7 +56,7 @@ struct UBO
 VSOutput vertMain(VSInput input, uint InstanceIndex: SV_InstanceID)
 {
     VSOutput output;
-    float4 tmpPos = input.Pos + ubo.instancePos[InstanceIndex];
+    float4 tmpPos = float4(input.Pos, 1.f) + ubo.instancePos[InstanceIndex];
 
     output.Pos = mul(ubo.projection, mul(ubo.view, mul(ubo.model, tmpPos)));
     
@@ -82,8 +82,8 @@ FSOutput fragMain(VSOutput input)
 
     // Calculate normal in tangent space
     float3 N = normalize(input.Normal);
-    float3 T = normalize(input.Tangent);
-    float3 B = cross(N, T);
+    float3 T = normalize(input.Tangent.xyz);
+    float3 B = cross(N, T) * input.Tangent.w;
     float3x3 TBN = float3x3(T, B, N);
 
     float3 tNorm = mul(normalize(samplerNormalMap.Sample(input.UV).xyz * 2.0 - float3(1.0, 1.0, 1.0)), TBN);
