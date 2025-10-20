@@ -59,7 +59,12 @@ static void framebufferResizeCallback(GLFWwindow* window, int width, int height)
 static void mouseMovementCallback(GLFWwindow* window, double xpos, double ypos)
 {
     auto app = reinterpret_cast<VulkanApp*>(glfwGetWindowUserPointer(window));
-    app->camera.rotate(glm::vec3(-ypos * app->camera.rotationSpeed, xpos * app->camera.rotationSpeed, 0.0f));
+    std::cout << std::format("mouse pos : ({}, {})", xpos, ypos) << std::endl;
+    double deltaXPos = xpos - app->lastXPos;
+    double deltaYPos = ypos - app->lastYPos;
+    app->camera.rotate(glm::vec3(-deltaYPos * app->camera.rotationSpeed, deltaXPos * app->camera.rotationSpeed, 0.0f));
+    app->lastXPos = xpos;
+    app->lastYPos = ypos;
 }
 
 vk::Extent2D VulkanApp::chooseSwapExtent(const vk::SurfaceCapabilitiesKHR& capabilities)
@@ -149,6 +154,8 @@ void VulkanApp::initWindow()
     glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
     // Set the mouse movement callback
     glfwSetCursorPosCallback(window, mouseMovementCallback);
+
+    glfwGetCursorPos(window, &lastXPos, &lastYPos);
 }
 
 void VulkanApp::initVulkan()
@@ -953,8 +960,8 @@ void VulkanApp::createUniformBuffers()
 
     // Setup instanced model positions
     uniformDataOffscreen.instancePos[0] = glm::vec4(0.0f);
-    uniformDataOffscreen.instancePos[1] = glm::vec4(-4.0f, 0.0, -4.0f, 0.0f);
-    uniformDataOffscreen.instancePos[2] = glm::vec4(4.0f, 0.0, -4.0f, 0.0f);
+    uniformDataOffscreen.instancePos[1] = glm::vec4(-10.0f, 0.0, -10.0f, 0.0f);
+    uniformDataOffscreen.instancePos[2] = glm::vec4(10.0f, 0.0, -10.0f, 0.0f);
 }
 
 void VulkanApp::updateUniformBufferOffscreen(uint32_t currentImage)
@@ -967,30 +974,51 @@ void VulkanApp::updateUniformBufferOffscreen(uint32_t currentImage)
 
 void VulkanApp::updateUniformBufferComposition(uint32_t currentFrame)
 {
-    // White
-    uniformDataComposition.lights[0].position = glm::vec4(0.0f, 0.0f, 1.0f, 0.0f);
-    uniformDataComposition.lights[0].color = glm::vec3(1.5f);
-    uniformDataComposition.lights[0].radius = 15.0f * 0.25f;
-    // Red
-    uniformDataComposition.lights[1].position = glm::vec4(-2.0f, 0.0f, 0.0f, 0.0f);
-    uniformDataComposition.lights[1].color = glm::vec3(1.0f, 0.0f, 0.0f);
-    uniformDataComposition.lights[1].radius = 15.0f;
-    // Blue
-    uniformDataComposition.lights[2].position = glm::vec4(2.0f, -1.0f, 0.0f, 0.0f);
-    uniformDataComposition.lights[2].color = glm::vec3(0.0f, 0.0f, 2.5f);
-    uniformDataComposition.lights[2].radius = 5.0f;
-    // Yellow
-    uniformDataComposition.lights[3].position = glm::vec4(0.0f, -0.9f, 0.5f, 0.0f);
-    uniformDataComposition.lights[3].color = glm::vec3(1.0f, 1.0f, 0.0f);
-    uniformDataComposition.lights[3].radius = 2.0f;
-    // Green
-    uniformDataComposition.lights[4].position = glm::vec4(0.0f, -0.5f, 0.0f, 0.0f);
-    uniformDataComposition.lights[4].color = glm::vec3(0.0f, 1.0f, 0.2f);
-    uniformDataComposition.lights[4].radius = 5.0f;
-    // Yellow
-    uniformDataComposition.lights[5].position = glm::vec4(0.0f, -1.0f, 0.0f, 0.0f);
-    uniformDataComposition.lights[5].color = glm::vec3(1.0f, 0.7f, 0.3f);
-    uniformDataComposition.lights[5].radius = 25.0f;
+    uniformDataComposition.lights[0].position = glm::vec4(0.0f, 0.0f, 25.0f, 0.0f);
+    uniformDataComposition.lights[1].position = glm::vec4(0.0f, 0.0f, 25.0f, 0.0f);
+    uniformDataComposition.lights[2].position = glm::vec4(0.0f, 0.0f, 25.0f, 0.0f);
+    uniformDataComposition.lights[3].position = glm::vec4(0.0f, 0.0f, 25.0f, 0.0f);
+    uniformDataComposition.lights[4].position = glm::vec4(0.0f, 0.0f, 25.0f, 0.0f);
+    uniformDataComposition.lights[5].position = glm::vec4(0.0f, 0.0f, 25.0f, 0.0f);
+
+    uniformDataComposition.lights[0].color = glm::vec3(1.0f, 0.96f, 0.84f);
+    uniformDataComposition.lights[1].color = glm::vec3(1.0f, 0.96f, 0.84f);
+    uniformDataComposition.lights[2].color = glm::vec3(1.0f, 0.96f, 0.84f);
+    uniformDataComposition.lights[3].color = glm::vec3(1.0f, 0.96f, 0.84f);
+    uniformDataComposition.lights[4].color = glm::vec3(1.0f, 0.96f, 0.84f);
+    uniformDataComposition.lights[5].color = glm::vec3(1.0f, 0.96f, 0.84f);
+    
+    uniformDataComposition.lights[0].radius = 30.0f;
+    uniformDataComposition.lights[1].radius = 30.0f;
+    uniformDataComposition.lights[2].radius = 30.0f;
+    uniformDataComposition.lights[3].radius = 30.0f;
+    uniformDataComposition.lights[4].radius = 30.0f;
+    uniformDataComposition.lights[5].radius = 30.0f;
+
+    //// White
+    //uniformDataComposition.lights[0].position = glm::vec4(0.0f, 0.0f, 10.0f, 0.0f);
+    //uniformDataComposition.lights[0].color = glm::vec3(1.5f);
+    //uniformDataComposition.lights[0].radius = 30.0f;
+    //// Red
+    //uniformDataComposition.lights[1].position = glm::vec4(-20.0f, 0.0f, 0.0f, 0.0f);
+    //uniformDataComposition.lights[1].color = glm::vec3(1.0f, 0.0f, 0.0f);
+    //uniformDataComposition.lights[1].radius = 30.0f;
+    //// Blue
+    //uniformDataComposition.lights[2].position = glm::vec4(20.0f, -20.0f, 0.0f, 0.0f);
+    //uniformDataComposition.lights[2].color = glm::vec3(0.0f, 0.0f, 2.5f);
+    //uniformDataComposition.lights[2].radius = 30.0f;
+    //// Yellow
+    //uniformDataComposition.lights[3].position = glm::vec4(0.0f, -30.0f, 10.0f, 0.0f);
+    //uniformDataComposition.lights[3].color = glm::vec3(1.0f, 1.0f, 0.0f);
+    //uniformDataComposition.lights[3].radius = 30.0f;
+    //// Green
+    //uniformDataComposition.lights[4].position = glm::vec4(0.0f, -20.0f, 0.0f, 0.0f);
+    //uniformDataComposition.lights[4].color = glm::vec3(0.0f, 1.0f, 0.2f);
+    //uniformDataComposition.lights[4].radius = 30.0f;
+    //// Yellow
+    //uniformDataComposition.lights[5].position = glm::vec4(0.0f, -20.0f, 20.0f, 0.0f);
+    //uniformDataComposition.lights[5].color = glm::vec3(1.0f, 0.7f, 0.3f);
+    //uniformDataComposition.lights[5].radius = 30.0f;
     // Current view position
     //uniformDataComposition.viewPos = glm::vec4(camera.position, 0.0f) * glm::vec4(-1.0f, 1.0f, -1.0f, 1.0f);
 
@@ -1465,6 +1493,7 @@ void VulkanApp::createCamera()
 {
     camera.type = CameraType::firstperson;
     camera.setMovementSpeed(5.0f);
+    //camera.setRotationSpeed(0.01f);
     camera.setPosition({ 2.15f, 0.3f, -8.75f });
     camera.setRotation(glm::vec3(-0.75f, 12.5f, 0.0f));
     camera.setPerspective(60.0f, (float)swapChainExtent.width / (float)swapChainExtent.height, 0.1f, 256.0f);
@@ -1653,6 +1682,11 @@ void VulkanApp::createAttachment(vk::ImageUsageFlagBits usage, FramebufferAttach
 
 void VulkanApp::handleInput()
 {
+    camera.keys.up = false;
+    camera.keys.down = false;
+    camera.keys.left = false;
+    camera.keys.right = false;
+
     // Forward / Backward
     if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
     {

@@ -23,8 +23,8 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
-constexpr  uint32_t WIDTH = 800;
-constexpr  uint32_t HEIGHT = 600;
+constexpr  uint32_t WIDTH = 1920;
+constexpr  uint32_t HEIGHT = 1080;
 
 constexpr int MAX_FRAMES_IN_FLIGHT = 2;
 
@@ -228,4 +228,6 @@ public:
     int32_t debugDisplayTarget = 0;
 
     Camera camera;
+    double lastXPos{};
+    double lastYPos{};
 };
