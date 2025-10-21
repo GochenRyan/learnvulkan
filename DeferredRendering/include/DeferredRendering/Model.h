@@ -445,11 +445,9 @@ public:
         // Arnold standard surface has the same mapping so it should also work.
         {"baseColor", "BaseColor"},
         {"normalCamera", "Normal"},
-        {"transmissionColor", "Metallic"},
-        {"specularColor", "Roughness"},
-        {"specularRoughness", "Roughness"},
-        {"emissionColor", "EmissiveColor"},
         {"metalness", "Metallic"},
+        {"diffuseRoughness", "Roughness"},
+        {"emissionColor", "EmissiveColor"},
         // UE import fbx workflow
         {FbxSurfaceMaterial::sDiffuse, "BaseColor"},
         {FbxSurfaceMaterial::sNormalMap, "Normal"},
