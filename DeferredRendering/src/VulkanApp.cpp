@@ -1358,7 +1358,7 @@ bool VulkanApp::loadModel()
     bool flipV = true;
     auto& model = models.emplace_back();
 
-    model.loadFromFile(ASSETS_SRC_DIR "/Model/scifipistol/SciFiPistol.fbx", deviceVK.get(), queue, FileLoadingFlags::PreTransformVertices | FileLoadingFlags::PreMultiplyVertexColors | FileLoadingFlags::FlipY);
+    model.loadFromFile(ASSETS_SRC_DIR "/Model/scifipistol/source/SciFiPistol_pbs.fbx", deviceVK.get(), queue, FileLoadingFlags::PreTransformVertices | FileLoadingFlags::PreMultiplyVertexColors | FileLoadingFlags::FlipY);
 
     return true;
 }
