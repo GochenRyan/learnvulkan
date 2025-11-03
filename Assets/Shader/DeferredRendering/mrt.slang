@@ -6,6 +6,7 @@
 [[vk::binding(1, 1)]] Sampler2D samplerNormalMap;
 [[vk::binding(2, 1)]] Sampler2D samplerMetallicMap;
 [[vk::binding(3, 1)]] Sampler2D samplerRoughnessMap;
+[[vk::binding(4, 1)]] Sampler2D aoMap;
 
 struct VSInput
 {
