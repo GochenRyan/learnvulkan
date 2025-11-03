@@ -57,6 +57,11 @@ inline FileLoadingFlags operator|(FileLoadingFlags lhs, FileLoadingFlags rhs)
     return static_cast<FileLoadingFlags>(static_cast<uint32_t>(lhs) | static_cast<uint32_t>(rhs));
 }
 
+inline int FBXToGLMType(const int& t)
+{
+    return t;
+}
+
 inline glm::vec2 FBXToGLMType(const FbxVector2& t)
 {
     return glm::vec2(
@@ -365,6 +370,23 @@ struct Node
 // };
 
 
+constexpr std::string_view PBSBaseColorName = "TEX_color_map";
+constexpr std::string_view PBSNormalName = "TEX_normal_map";
+constexpr std::string_view PBSMetallicName = "TEX_metallic_map";
+constexpr std::string_view PBSRoughnessName = "TEX_roughness_map";
+constexpr std::string_view PBSEmissiveColorName = "TEX_emissive_map";
+constexpr std::string_view PBSAOName = "TEX_ao_map";
+
+constexpr std::string_view BaseColorName = "BaseColor";
+constexpr std::string_view NormalName = "Normal";
+constexpr std::string_view MetallicName = "Metallic";
+constexpr std::string_view RoughnessName = "Roughness";
+constexpr std::string_view EmissiveColorName = "EmissiveColor";
+constexpr std::string_view AOName = "AO";
+
+
+constexpr std::string_view ORMName = "ORM";
+
 class Model final
 {
 public:
@@ -385,7 +407,6 @@ public:
     // void loadSkins();
      //bool getTextureMetaFromFile(const std::string& path, Texture& outMeta);
      void loadMaterials(FbxNode* pNode, const vk::raii::Queue& transferQueue);
-     void checkMaterials();
     // void loadAnimations();
      void createDescriptorSet(vk::raii::DescriptorPool& descriptorPool, vk::raii::DescriptorSetLayout& descriptorSetLayout);
 public:
@@ -440,29 +461,21 @@ public:
     bool buffersBound = false;
     std::string path;
 
-    inline static std::unordered_map<std::string, std::string> FBXPropertyToNew = {
-        // Maya standard surface workflow which supports sd material->maya->fbx.
-        // Arnold standard surface has the same mapping so it should also work.
-        {"baseColor", "BaseColor"},
-        {"normalCamera", "Normal"},
-        {"metalness", "Metallic"},
-        {"diffuseRoughness", "Roughness"},
-        {"emissionColor", "EmissiveColor"},
-        // UE import fbx workflow
-        {FbxSurfaceMaterial::sDiffuse, "BaseColor"},
-        {FbxSurfaceMaterial::sNormalMap, "Normal"},
-        {FbxSurfaceMaterial::sBump, "Normal"},
-        {FbxSurfaceMaterial::sSpecularFactor, "Roughness"},
-        {FbxSurfaceMaterial::sShininess, "Metallic"},
-        {FbxSurfaceMaterial::sEmissive, "EmissiveColor"},
-        {FbxSurfaceMaterial::sAmbient, "AmbientColor"},
-        {FbxSurfaceMaterial::sSpecular, "Specular"},
-        {FbxSurfaceMaterial::sTransparentColor, "Opacity"},
-        {FbxSurfaceMaterial::sTransparencyFactor, "OpacityMask"}
+    bool useORM = false;
+
+    inline static std::unordered_map<std::string_view, std::string_view> PBSToNew = {
+        {PBSBaseColorName, BaseColorName},
+        {PBSNormalName, NormalName},
+        {PBSMetallicName, MetallicName},
+        {PBSRoughnessName, RoughnessName},
+        {PBSEmissiveColorName, EmissiveColorName},
+        {PBSAOName, AOName},
     };
 private:
-    void createEmptyTexture(const vk::raii::Queue& transferQueue);
+    Texture& createEmptyTexture(const vk::raii::Queue& transferQueue, glm::vec4 color);
+    void checkMaterial();
+    void checkORM();
 private:
-    Texture emptyTexture;
+    inline static std::unordered_map<std::string_view, Texture> emptyTextureTable;
     bool flipV = true;
 };

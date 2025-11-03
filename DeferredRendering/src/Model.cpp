@@ -199,7 +199,7 @@ void Model::createDescriptorSet(vk::raii::DescriptorPool& descriptorPool, vk::ra
         std::vector<vk::WriteDescriptorSet> writeDescriptorSets;
 
         {
-            auto& texture = textureLookup[material.textureMap["BaseColor"]];
+            auto& texture = textureLookup[material.textureMap[BaseColorName.data()]];
             vk::WriteDescriptorSet descriptorWrite{
                 .dstSet = material.descriptorSet,
                 .dstBinding = static_cast<uint32_t>(writeDescriptorSets.size()),
@@ -212,7 +212,7 @@ void Model::createDescriptorSet(vk::raii::DescriptorPool& descriptorPool, vk::ra
         }
 
         {
-            auto& texture = textureLookup[material.textureMap["Normal"]];
+            auto& texture = textureLookup[material.textureMap[NormalName.data()]];
             vk::WriteDescriptorSet descriptorWrite{
                 .dstSet = material.descriptorSet,
                 .dstBinding = static_cast<uint32_t>(writeDescriptorSets.size()),
@@ -225,7 +225,7 @@ void Model::createDescriptorSet(vk::raii::DescriptorPool& descriptorPool, vk::ra
         }
         
         {
-            auto& texture = textureLookup[material.textureMap["Metallic"]];
+            auto& texture = textureLookup[material.textureMap[MetallicName.data()]];
             vk::WriteDescriptorSet descriptorWrite{
                 .dstSet = material.descriptorSet,
                 .dstBinding = static_cast<uint32_t>(writeDescriptorSets.size()),
@@ -238,7 +238,33 @@ void Model::createDescriptorSet(vk::raii::DescriptorPool& descriptorPool, vk::ra
         }
 
         {
-            auto& texture = textureLookup[material.textureMap["Roughness"]];
+            auto& texture = textureLookup[material.textureMap[RoughnessName.data()]];
+            vk::WriteDescriptorSet descriptorWrite{
+                .dstSet = material.descriptorSet,
+                .dstBinding = static_cast<uint32_t>(writeDescriptorSets.size()),
+                .dstArrayElement = 0,
+                .descriptorCount = 1,
+                .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+                .pImageInfo = &(texture.descriptor)
+            };
+            writeDescriptorSets.push_back(descriptorWrite);
+        }
+
+        {
+            auto& texture = textureLookup[material.textureMap[EmissiveColorName.data()]];
+            vk::WriteDescriptorSet descriptorWrite{
+                .dstSet = material.descriptorSet,
+                .dstBinding = static_cast<uint32_t>(writeDescriptorSets.size()),
+                .dstArrayElement = 0,
+                .descriptorCount = 1,
+                .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+                .pImageInfo = &(texture.descriptor)
+            };
+            writeDescriptorSets.push_back(descriptorWrite);
+        }
+
+        {
+            auto& texture = textureLookup[material.textureMap[AOName.data()]];
             vk::WriteDescriptorSet descriptorWrite{
                 .dstSet = material.descriptorSet,
                 .dstBinding = static_cast<uint32_t>(writeDescriptorSets.size()),
@@ -296,6 +322,17 @@ Model::~Model()
 
 bool Model::loadFromFile(std::string filename, VulkanDevice* device, const vk::raii::Queue &transferQueue, FileLoadingFlags fileLoadingFlags, float scale)
 {
+    if (emptyTextureTable.empty())
+    {
+        emptyTextureTable[BaseColorName] = std::move(createEmptyTexture(transferQueue, glm::vec4(255.f, 255.f, 255.f, 255.f)));
+        emptyTextureTable[NormalName] = std::move(createEmptyTexture(transferQueue, glm::vec4(128.f, 128.f, 255.f, 255.f)));
+        emptyTextureTable[MetallicName] = std::move(createEmptyTexture(transferQueue, glm::vec4(0.f, 0.f, 0.f, 255.f)));
+        emptyTextureTable[RoughnessName] = std::move(createEmptyTexture(transferQueue, glm::vec4(255.f, 255.f, 255.f, 255.f)));
+        emptyTextureTable[EmissiveColorName] = std::move(createEmptyTexture(transferQueue, glm::vec4(0.f, 0.f, 0.f, 255.f)));
+        emptyTextureTable[AOName] = std::move(createEmptyTexture(transferQueue, glm::vec4(255.f, 255.f, 255.f, 255.f)));
+        emptyTextureTable[ORMName] = std::move(createEmptyTexture(transferQueue, glm::vec4(255.f, 255.f, 0.f, 255.f)));
+    }
+
     this->deviceVK = device;
 
     // Create manager & iosettings
@@ -390,33 +427,6 @@ bool Model::loadFromFile(std::string filename, VulkanDevice* device, const vk::r
     return true;
 }
 
-void Model::checkMaterials()
-{
-    for (int i = 0; i < materialLookup.size(); ++i)
-    {
-        auto& material = materialLookup[i];
-        if (material.textureMap.find("BaseColor") == material.textureMap.end())
-        {
-            throw std::runtime_error("No base color texture");
-        }
-
-        if (material.textureMap.find("Normal") == material.textureMap.end())
-        {
-            throw std::runtime_error("No normal texture");
-        }
-
-        if (material.textureMap.find("Metallic") == material.textureMap.end())
-        {
-            material.textureMap["Metallic"] = -1;
-        }
-
-        if (material.textureMap.find("Roughness") == material.textureMap.end())
-        {
-            material.textureMap["Roughness"] = -1;
-        }
-    }
-}
-
 void Model::loadMaterials(FbxNode* pNode, const vk::raii::Queue& transferQueue)
 {
     if (!pNode) return;
@@ -427,12 +437,13 @@ void Model::loadMaterials(FbxNode* pNode, const vk::raii::Queue& transferQueue)
         if (!mat) continue;
 
         auto& material = materialLookup.emplace_back(deviceVK);
+
         FbxProperty currentProperty = mat->GetFirstProperty();
         while (currentProperty.IsValid())
         {
             const char* pFBXPropertyName = currentProperty.GetNameAsCStr();
 
-            if (const auto& iter = FBXPropertyToNew.find(pFBXPropertyName); iter != FBXPropertyToNew.cend())
+            if (const auto& iter = PBSToNew.find(pFBXPropertyName); iter != PBSToNew.cend())
             {
                 FbxFileTexture* resTexture = nullptr;
 
@@ -457,14 +468,29 @@ void Model::loadMaterials(FbxNode* pNode, const vk::raii::Queue& transferQueue)
 
                 if (resTexture != nullptr)
                 {
-                    Texture& texture = textureLookup.emplace_back();
-                    texture.path = resTexture->GetFileName();
-                    texture.name = resTexture->GetRelativeFileName();
-                    //todo: prepare vk context
-                    texture.loadImage(texture.path, deviceVK, transferQueue);
-                    texture.index = static_cast<uint32_t>(textureLookup.size() - 1);
+                    bool find = false;
+                    for (size_t i = 0; i < textureLookup.size(); ++i)
+                    {
+                        auto& texture = textureLookup[i];
+                        if (texture.path == resTexture->GetFileName())
+                        {
+                            material.textureMap[iter->second.data()] = texture.index;
+                            find = true;
+                            break;
+                        }
+                    }
 
-                    material.textureMap[iter->second] = texture.index;
+                    if (!find)
+                    {
+                        Texture& texture = textureLookup.emplace_back();
+                        texture.path = resTexture->GetFileName();
+                        texture.name = resTexture->GetRelativeFileName();
+                        //todo: prepare vk context
+                        texture.loadImage(texture.path, deviceVK, transferQueue);
+                        texture.index = static_cast<uint32_t>(textureLookup.size() - 1);
+
+                        material.textureMap[iter->second.data()] = texture.index;
+                    }
                 }
             }
             else if (FloatParamArray.find(pFBXPropertyName) != FloatParamArray.cend())
@@ -474,13 +500,65 @@ void Model::loadMaterials(FbxNode* pNode, const vk::raii::Queue& transferQueue)
             }
             else
             {
-                //std::cout << std::format("missing property name : {0}", pFBXPropertyName) << std::endl;
+                std::cout << std::format("missing property name : {0}", pFBXPropertyName) << std::endl;
             }
 
             currentProperty = mat->GetNextProperty(currentProperty);
         }
     }
+    checkMaterials();
+    checkORM();
 }
+
+void Model::checkMaterials()
+{
+    for (auto& mat : materialLookup)
+    {
+        if (mat.textureMap.find(BaseColorName.data()) == mat.textureMap.end())
+        {
+            mat.textureMap[BaseColorName.data()] = -1;
+        }
+
+        if (mat.textureMap.find(NormalName.data()) == mat.textureMap.end())
+        {
+            mat.textureMap[NormalName.data()] = -1;
+        }
+
+        if (mat.textureMap.find(MetallicName.data()) == mat.textureMap.end())
+        {
+            mat.textureMap[MetallicName.data()] = -1;
+        }
+
+        if (mat.textureMap.find(RoughnessName.data()) == mat.textureMap.end())
+        {
+            mat.textureMap[RoughnessName.data()] = -1;
+        }
+
+        if (mat.textureMap.find(EmissiveColorName.data()) == mat.textureMap.end())
+        {
+            mat.textureMap[EmissiveColorName.data()] = -1;
+        }
+
+        if (mat.textureMap.find(AOName.data()) == mat.textureMap.end())
+        {
+            mat.textureMap[AOName.data()] = -1;
+        }
+    }
+}
+
+void Model::checkORM()
+{
+    for (const auto& mat : materialLookup)
+    {
+        if (mat.textureMap.at(AOName.data()) == mat.textureMap.at(RoughnessName.data()) &&
+            mat.textureMap.at(AOName.data()) == mat.textureMap.at(MetallicName.data()))
+        {
+            useORM = true;
+            break;
+        }
+    }
+}
+
 
 void Model::loadNodeRecursively(FbxNode* fbxNode, Node* parent)
 {
@@ -633,12 +711,19 @@ void Model::loadNodeRecursively(FbxNode* fbxNode, Node* parent)
                                 if (triangleSmGroupLookup[i] != -1 && vertexSmGroupLookup[k] == triangleSmGroupLookup[i])
                                 {
                                     vertices[k].normal += v.normal;
-                                    assert(vertices[k].tangent[3] * v.tangent[3] > 0 && "the w component of the tangent is incorrect.");
-                                    vertices[k].tangent += glm::vec4(v.tangent.x, v.tangent.y, v.tangent.z, 0.f);
+                                    if (vertices[k].tangent[3] * v.tangent[3] > 0 && glm::dot(glm::vec3(vertices[k].tangent), glm::vec3(v.tangent)) > 0)
+                                    {
+                                        vertices[k].tangent += v.tangent;
+                                        v.normal = vertices[k].normal;
+                                        v.tangent = vertices[k].tangent;
+                                    }
+                                    else if (vertices[k].tangent[3] * v.tangent[3] < 0 && glm::dot(glm::vec3(vertices[k].tangent), glm::vec3(v.tangent)) < 0)
+                                    {
+                                        vertices[k].tangent -= v.tangent;
 
-                                    //todo
-                                    v.normal = vertices[k].normal;
-                                    v.tangent = vertices[k].tangent;
+                                        v.normal = vertices[k].normal;
+                                        v.tangent = vertices[k].tangent;
+                                    }
                                 }
                             }
                         }
@@ -649,7 +734,9 @@ void Model::loadNodeRecursively(FbxNode* fbxNode, Node* parent)
                         {
                             if (vertices[k].pos == v.pos)
                             {
-                                if (triangleSmGroupLookup[i] != -1 && vertexSmGroupLookup[k] == triangleSmGroupLookup[i])
+                                if (triangleSmGroupLookup[i] != -1 && 
+                                    vertexSmGroupLookup[k] == triangleSmGroupLookup[i] &&
+                                    vertices[k].tangent[3] * v.tangent[3] > 0)
                                 {
                                     int uvSet = 0;
                                     for (uvSet = 0; uvSet < MAX_UV_SETS; uvSet++)
@@ -685,9 +772,9 @@ void Model::loadNodeRecursively(FbxNode* fbxNode, Node* parent)
             for (auto& vertex : vertices)
             {
                 vertex.normal = glm::normalize(vertex.normal);
-                auto T = glm::vec3(vertex.tangent.x, vertex.tangent.y, vertex.tangent.z);
+                auto T = glm::normalize(glm::vec3(vertex.tangent));
                 T = glm::normalize(T - vertex.normal * glm::dot(vertex.normal, T));
-                vertex.tangent = glm::vec4(T.x, T.y, T.z, vertex.tangent.w);
+                vertex.tangent = glm::vec4(T, vertex.tangent.w > 0 ? 1 : -1);
             }
 
             Primitive primitive;
@@ -703,8 +790,6 @@ void Model::loadNodeRecursively(FbxNode* fbxNode, Node* parent)
             primitive.materialIndex = mi;
             node.mesh->primitives.push_back(primitive);
         }
-
-
 
         for (size_t i = 0; i < fbxNode->GetChildCount(); ++i)
         {
@@ -759,28 +844,30 @@ Node* Model::nodeFromIndex(uint32_t index)
         return nullptr;
 }
 
-void Model::createEmptyTexture(const vk::raii::Queue& transferQueue)
+Texture& Model::createEmptyTexture(const vk::raii::Queue& transferQueue, glm::vec4 color)
 {
-    emptyTexture.deviceVK = deviceVK;
-    emptyTexture.width = 1;
-    emptyTexture.height = 1;
-    emptyTexture.layerCount = 1;
-    emptyTexture.mipLevels = 1;
-    emptyTexture.index = -1;
+    Texture *emptyTexture = new Texture();
+    emptyTexture->deviceVK = deviceVK;
+    emptyTexture->width = 1;
+    emptyTexture->height = 1;
+    emptyTexture->layerCount = 1;
+    emptyTexture->mipLevels = 1;
+    emptyTexture->index = -1;
 
-    vk::DeviceSize imageSize = emptyTexture.width * emptyTexture.height * 4;
+    vk::DeviceSize imageSize = emptyTexture->width * emptyTexture->height * 4;
 
     vk::raii::Buffer stagingBuffer = nullptr;
     vk::raii::DeviceMemory stagingBufferMemory = nullptr;
     deviceVK->CreateBuffer(imageSize, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, stagingBuffer, stagingBufferMemory);
     void* dataStaging = stagingBufferMemory.mapMemory(0, imageSize);
-    memcpy(dataStaging, 0, imageSize);
+    unsigned char pixel[4] = { color.r, color.g, color.b, color.a };
+    memcpy(dataStaging, pixel, imageSize);
     stagingBufferMemory.unmapMemory();
 
-    deviceVK->CreateImage(emptyTexture.width, emptyTexture.height, vk::Format::eR8G8B8A8Srgb, emptyTexture.mipLevels, vk::ImageTiling::eOptimal, vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eSampled, vk::MemoryPropertyFlagBits::eDeviceLocal, emptyTexture.image, emptyTexture.deviceMemory);
-    deviceVK->transitionImageLayout(emptyTexture.image, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal, transferQueue);
-    deviceVK->copyBufferToImage(stagingBuffer, emptyTexture.image, static_cast<uint32_t>(emptyTexture.width), static_cast<uint32_t>(emptyTexture.height), transferQueue);
-    deviceVK->transitionImageLayout(emptyTexture.image, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eTransferSrcOptimal, transferQueue);
+    deviceVK->CreateImage(emptyTexture->width, emptyTexture->height, vk::Format::eR8G8B8A8Srgb, emptyTexture->mipLevels, vk::ImageTiling::eOptimal, vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eSampled, vk::MemoryPropertyFlagBits::eDeviceLocal, emptyTexture->image, emptyTexture->deviceMemory);
+    deviceVK->transitionImageLayout(emptyTexture->image, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal, transferQueue);
+    deviceVK->copyBufferToImage(stagingBuffer, emptyTexture->image, static_cast<uint32_t>(emptyTexture->width), static_cast<uint32_t>(emptyTexture->height), transferQueue);
+    deviceVK->transitionImageLayout(emptyTexture->image, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eTransferSrcOptimal, transferQueue);
 
     vk::PhysicalDeviceProperties properties = deviceVK->physicalDevice.getProperties();
     // Sampler
@@ -796,7 +883,7 @@ void Model::createEmptyTexture(const vk::raii::Queue& transferQueue)
         .maxAnisotropy = properties.limits.maxSamplerAnisotropy,
         .compareEnable = vk::False,
         .compareOp = vk::CompareOp::eNever,
-        .maxLod = (float)emptyTexture.mipLevels,
+        .maxLod = (float)emptyTexture->mipLevels,
         .borderColor = vk::BorderColor::eFloatOpaqueWhite,
         /*
             The unnormalizedCoordinates field specifies which coordinate system you want to use to address texels in an image.
@@ -805,22 +892,24 @@ void Model::createEmptyTexture(const vk::raii::Queue& transferQueue)
         */
         .unnormalizedCoordinates = vk::False
     };
-    emptyTexture.sampler = deviceVK->logicDevice.createSampler(samplerCI);
+    emptyTexture->sampler = deviceVK->logicDevice.createSampler(samplerCI);
 
-    emptyTexture.format = vk::Format::eR8G8B8A8Srgb;
+    emptyTexture->format = vk::Format::eR8G8B8A8Srgb;
 
     vk::ImageViewCreateInfo viewCI{
-        .image = emptyTexture.image,
+        .image = emptyTexture->image,
         .viewType = vk::ImageViewType::e2D,
         .format = vk::Format::eR8G8B8A8Srgb,
-        .subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eColor, .levelCount = emptyTexture.mipLevels, .layerCount = 1 }
+        .subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eColor, .levelCount = emptyTexture->mipLevels, .layerCount = 1 }
     };
-    emptyTexture.view = deviceVK->logicDevice.createImageView(viewCI);
+    emptyTexture->view = deviceVK->logicDevice.createImageView(viewCI);
 
-    emptyTexture.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
-    emptyTexture.descriptor.sampler = emptyTexture.sampler;
-    emptyTexture.descriptor.imageView = emptyTexture.view;
-    emptyTexture.descriptor.imageLayout = emptyTexture.imageLayout;
+    emptyTexture->imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+    emptyTexture->descriptor.sampler = emptyTexture->sampler;
+    emptyTexture->descriptor.imageView = emptyTexture->view;
+    emptyTexture->descriptor.imageLayout = emptyTexture->imageLayout;
+
+    return *emptyTexture;
 }
 
 void Model::drawNode(Node* node, vk::raii::CommandBuffer& commandBuffer, RenderFlags renderFlags, const vk::raii::PipelineLayout& pipelineLayout, uint32_t bindImageSet)
