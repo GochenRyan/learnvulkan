@@ -473,7 +473,7 @@ public:
     };
 private:
     Texture& createEmptyTexture(const vk::raii::Queue& transferQueue, glm::vec4 color);
-    void checkMaterial();
+    void checkMaterials();
     void checkORM();
 private:
     inline static std::unordered_map<std::string_view, Texture> emptyTextureTable;
