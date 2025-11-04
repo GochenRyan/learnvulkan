@@ -23,8 +23,8 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
-constexpr  uint32_t WIDTH = 1920;
-constexpr  uint32_t HEIGHT = 1080;
+constexpr uint32_t WIDTH = 1920;
+constexpr uint32_t HEIGHT = 1080;
 
 constexpr int MAX_FRAMES_IN_FLIGHT = 2;
 
@@ -50,7 +50,7 @@ struct Framebuffer
 {
     uint32_t width, height;
     vk::raii::Framebuffer framebuffer = nullptr;
-    FramebufferAttachment position, normal, albedo;
+    FramebufferAttachment position, normal, albedo, metallic, roughness, emissive, ao, orm;
     FramebufferAttachment depth;
     vk::raii::RenderPass renderPass = nullptr;
 };

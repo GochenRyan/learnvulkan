@@ -384,8 +384,9 @@ constexpr std::string_view RoughnessName = "Roughness";
 constexpr std::string_view EmissiveColorName = "EmissiveColor";
 constexpr std::string_view AOName = "AO";
 
-
 constexpr std::string_view ORMName = "ORM";
+
+constexpr int InvalidTextureIndex = -1;
 
 class Model final
 {

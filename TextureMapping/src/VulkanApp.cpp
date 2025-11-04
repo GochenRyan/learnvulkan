@@ -411,8 +411,8 @@ void VulkanApp::createSurface()
 
 void VulkanApp::createGraphicPipeline()
 {
-    //auto shaderCode = readFile("Assets/Shader/HelloTriangle/slang.spv");
-    auto shaderCode = readFile(ASSETS_SRC_DIR "/Shader/TextureMapping/slang.spv");
+    //auto shaderCode = readFile("Assets/Shader/HelloTriangle/shader.spv");
+    auto shaderCode = readFile(ASSETS_SRC_DIR "/Shader/TextureMapping/shader.spv");
     vk::raii::ShaderModule shaderModule = createShaderModule(shaderCode);
 
     /*

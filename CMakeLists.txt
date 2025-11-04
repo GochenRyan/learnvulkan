@@ -68,17 +68,46 @@ foreach(shader_dir ${SHADER_DIRS})
         # Get the file name (without extension)
         get_filename_component(shader_name ${shader_file} NAME_WE)
 
-        # Build the path of the output .spv file
+        # Build the path of the output .spv file (default)
         set(output_file "${shader_dir}/${shader_name}.spv")
+        # Build the path of the ORM variant .spv file
+        set(output_file_orm "${shader_dir}/${shader_name}_ORM.spv")
+
+        # Read shader source to check whether it references USE_ORM (several common patterns)
+        file(READ "${shader_file}" shader_text)
+
+        # Look for a few patterns that indicate the shader uses the macro
+        string(FIND "${shader_text}" "USE_ORM" found_useorm)            # any appearance of token
+        string(FIND "${shader_text}" "defined(USE_ORM)" found_defined)  # defined(USE_ORM)
+        string(FIND "${shader_text}" "#ifdef USE_ORM" found_ifdef)      # #ifdef USE_ORM
+        string(FIND "${shader_text}" "#if USE_ORM" found_if)            # #if USE_ORM
+
+        set(need_orm_variant FALSE)
+        if(NOT found_useorm EQUAL -1 OR NOT found_defined EQUAL -1 OR NOT found_ifdef EQUAL -1 OR NOT found_if EQUAL -1)
+            set(need_orm_variant TRUE)
+        endif()
+
+        # Construct command strings (use quotes to handle spaces)
+        set(CMD_DEFAULT "${CMAKE_SOURCE_DIR}/compile.bat ${shader_file} ${output_file}")
+        set(CMD_ORM     "${CMAKE_SOURCE_DIR}/compile.bat ${shader_file} ${output_file_orm} -D USE_ORM")
 
         add_custom_command(
             TARGET RunScript
-            COMMAND cmd.exe /c "${CMAKE_SOURCE_DIR}/compile.bat"
-                "${shader_file}" 
-                "${output_file}"
+            COMMAND cmd.exe /c ${CMD_DEFAULT}
             WORKING_DIRECTORY "${shader_dir}"
             COMMENT "Parsing shader: ${shader_file}"
         )
+
+        if(need_orm_variant)
+            add_custom_command(
+                TARGET RunScript
+                COMMAND cmd.exe /c ${CMD_ORM}
+                WORKING_DIRECTORY "${shader_dir}"
+                COMMENT "Parsing shader (USE_ORM): ${shader_file}"
+            )
+        else()
+            message(VERBOSE "Skipping ORM variant for ${shader_file} (no USE_ORM found).")
+        endif()
     endforeach()
 endforeach()
 

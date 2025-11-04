@@ -198,83 +198,34 @@ void Model::createDescriptorSet(vk::raii::DescriptorPool& descriptorPool, vk::ra
 
         std::vector<vk::WriteDescriptorSet> writeDescriptorSets;
 
-        {
-            auto& texture = textureLookup[material.textureMap[BaseColorName.data()]];
-            vk::WriteDescriptorSet descriptorWrite{
-                .dstSet = material.descriptorSet,
-                .dstBinding = static_cast<uint32_t>(writeDescriptorSets.size()),
-                .dstArrayElement = 0,
-                .descriptorCount = 1,
-                .descriptorType = vk::DescriptorType::eCombinedImageSampler,
-                .pImageInfo = &(texture.descriptor)
-            };
-            writeDescriptorSets.push_back(descriptorWrite);
-        }
+        auto setupWriteDescriptorSets = [&](std::string_view texName) {
+            Texture* pTexture;
+            if (material.textureMap[texName.data()] == InvalidTextureIndex)
+            {
+                pTexture = &emptyTextureTable[texName.data()];
+            }
+            else
+            {
+                pTexture = &textureLookup[material.textureMap[texName.data()]];
+            }
 
-        {
-            auto& texture = textureLookup[material.textureMap[NormalName.data()]];
             vk::WriteDescriptorSet descriptorWrite{
                 .dstSet = material.descriptorSet,
                 .dstBinding = static_cast<uint32_t>(writeDescriptorSets.size()),
                 .dstArrayElement = 0,
                 .descriptorCount = 1,
                 .descriptorType = vk::DescriptorType::eCombinedImageSampler,
-                .pImageInfo = &(texture.descriptor)
+                .pImageInfo = &(pTexture->descriptor)
             };
             writeDescriptorSets.push_back(descriptorWrite);
-        }
-        
-        {
-            auto& texture = textureLookup[material.textureMap[MetallicName.data()]];
-            vk::WriteDescriptorSet descriptorWrite{
-                .dstSet = material.descriptorSet,
-                .dstBinding = static_cast<uint32_t>(writeDescriptorSets.size()),
-                .dstArrayElement = 0,
-                .descriptorCount = 1,
-                .descriptorType = vk::DescriptorType::eCombinedImageSampler,
-                .pImageInfo = &(texture.descriptor)
-            };
-            writeDescriptorSets.push_back(descriptorWrite);
-        }
+        };
 
-        {
-            auto& texture = textureLookup[material.textureMap[RoughnessName.data()]];
-            vk::WriteDescriptorSet descriptorWrite{
-                .dstSet = material.descriptorSet,
-                .dstBinding = static_cast<uint32_t>(writeDescriptorSets.size()),
-                .dstArrayElement = 0,
-                .descriptorCount = 1,
-                .descriptorType = vk::DescriptorType::eCombinedImageSampler,
-                .pImageInfo = &(texture.descriptor)
-            };
-            writeDescriptorSets.push_back(descriptorWrite);
-        }
-
-        {
-            auto& texture = textureLookup[material.textureMap[EmissiveColorName.data()]];
-            vk::WriteDescriptorSet descriptorWrite{
-                .dstSet = material.descriptorSet,
-                .dstBinding = static_cast<uint32_t>(writeDescriptorSets.size()),
-                .dstArrayElement = 0,
-                .descriptorCount = 1,
-                .descriptorType = vk::DescriptorType::eCombinedImageSampler,
-                .pImageInfo = &(texture.descriptor)
-            };
-            writeDescriptorSets.push_back(descriptorWrite);
-        }
-
-        {
-            auto& texture = textureLookup[material.textureMap[AOName.data()]];
-            vk::WriteDescriptorSet descriptorWrite{
-                .dstSet = material.descriptorSet,
-                .dstBinding = static_cast<uint32_t>(writeDescriptorSets.size()),
-                .dstArrayElement = 0,
-                .descriptorCount = 1,
-                .descriptorType = vk::DescriptorType::eCombinedImageSampler,
-                .pImageInfo = &(texture.descriptor)
-            };
-            writeDescriptorSets.push_back(descriptorWrite);
-        }
+        setupWriteDescriptorSets(BaseColorName);
+        setupWriteDescriptorSets(NormalName);
+        setupWriteDescriptorSets(MetallicName);
+        setupWriteDescriptorSets(RoughnessName);
+        setupWriteDescriptorSets(EmissiveColorName);
+        setupWriteDescriptorSets(AOName);
 
         deviceVK->logicDevice.updateDescriptorSets(writeDescriptorSets, {});
     }

@@ -1035,7 +1035,7 @@ void VulkanApp::createDescriptors()
 void VulkanApp::createDescriptorPool()
 {
     constexpr int uniformBufferCount = 2;
-    constexpr int sampler2DCount = 7;
+    constexpr int sampler2DCount = 15;
     constexpr int margin = 2;
     constexpr int maxSets = 3;
 
@@ -1134,6 +1134,41 @@ void VulkanApp::createDescriptorSets()
                 },
                 vk::DescriptorSetLayoutBinding{
                     .binding = 3,
+                    .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+                    .descriptorCount = 1,
+                    .stageFlags = vk::ShaderStageFlagBits::eFragment,
+                    .pImmutableSamplers = nullptr
+                },
+                vk::DescriptorSetLayoutBinding{
+                    .binding = 4,
+                    .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+                    .descriptorCount = 1,
+                    .stageFlags = vk::ShaderStageFlagBits::eFragment,
+                    .pImmutableSamplers = nullptr
+                },
+                vk::DescriptorSetLayoutBinding{
+                    .binding = 5,
+                    .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+                    .descriptorCount = 1,
+                    .stageFlags = vk::ShaderStageFlagBits::eFragment,
+                    .pImmutableSamplers = nullptr
+                },
+                vk::DescriptorSetLayoutBinding{
+                    .binding = 6,
+                    .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+                    .descriptorCount = 1,
+                    .stageFlags = vk::ShaderStageFlagBits::eFragment,
+                    .pImmutableSamplers = nullptr
+                },
+                vk::DescriptorSetLayoutBinding{
+                    .binding = 7,
+                    .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+                    .descriptorCount = 1,
+                    .stageFlags = vk::ShaderStageFlagBits::eFragment,
+                    .pImmutableSamplers = nullptr
+                },
+                vk::DescriptorSetLayoutBinding{
+                    .binding = 8,
                     .descriptorType = vk::DescriptorType::eUniformBuffer,
                     .descriptorCount = 1,
                     .stageFlags = vk::ShaderStageFlagBits::eFragment,
@@ -1153,28 +1188,15 @@ void VulkanApp::createDescriptorSets()
             };
 
             descriptorSets[i].composition = std::move(deviceVK->logicDevice.allocateDescriptorSets(allocInfo)[0]);
+
+            
+
             std::vector<vk::WriteDescriptorSet> writeDescriptorSets;
-            {
-                vk::DescriptorImageInfo descriptor{
-                    .sampler = colorSampler,
-                    .imageView = offScreenFramebuffer.position.view,
-                    .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal
-                };
-                vk::WriteDescriptorSet descriptorWrite{
-                    .dstSet = descriptorSets[i].composition,
-                    .dstBinding = static_cast<uint32_t>(writeDescriptorSets.size()),
-                    .dstArrayElement = 0,
-                    .descriptorCount = 1,
-                    .descriptorType = vk::DescriptorType::eCombinedImageSampler,
-                    .pImageInfo = &descriptor
-                };
-                writeDescriptorSets.push_back(descriptorWrite);
-            }
 
-            {
+            auto writeImageDescriptorSets = [&](vk::raii::ImageView& imageView) {
                 vk::DescriptorImageInfo descriptor{
                     .sampler = colorSampler,
-                    .imageView = offScreenFramebuffer.normal.view,
+                    .imageView = imageView,
                     .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal
                 };
                 vk::WriteDescriptorSet descriptorWrite{
@@ -1186,24 +1208,15 @@ void VulkanApp::createDescriptorSets()
                     .pImageInfo = &descriptor
                 };
                 writeDescriptorSets.push_back(descriptorWrite);
-            }
-
-            {
-                vk::DescriptorImageInfo descriptor{
-                    .sampler = colorSampler,
-                    .imageView = offScreenFramebuffer.albedo.view,
-                    .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal
-                };
-                vk::WriteDescriptorSet descriptorWrite{
-                    .dstSet = descriptorSets[i].composition,
-                    .dstBinding = static_cast<uint32_t>(writeDescriptorSets.size()),
-                    .dstArrayElement = 0,
-                    .descriptorCount = 1,
-                    .descriptorType = vk::DescriptorType::eCombinedImageSampler,
-                    .pImageInfo = &descriptor
-                };
-                writeDescriptorSets.push_back(descriptorWrite);
-            }
+            };
+            writeImageDescriptorSets(offScreenFramebuffer.position.view);
+            writeImageDescriptorSets(offScreenFramebuffer.normal.view);
+            writeImageDescriptorSets(offScreenFramebuffer.albedo.view);
+            writeImageDescriptorSets(offScreenFramebuffer.metallic.view);
+            writeImageDescriptorSets(offScreenFramebuffer.roughness.view);
+            writeImageDescriptorSets(offScreenFramebuffer.emissive.view);
+            writeImageDescriptorSets(offScreenFramebuffer.ao.view);
+            writeImageDescriptorSets(offScreenFramebuffer.orm.view);
 
             {
                 vk::DescriptorBufferInfo descriptor{
@@ -1252,6 +1265,27 @@ void VulkanApp::createDescriptorSets()
             },
             vk::DescriptorSetLayoutBinding {
                 .binding = 3,
+                .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+                .descriptorCount = 1,
+                .stageFlags = vk::ShaderStageFlagBits::eFragment,
+                .pImmutableSamplers = nullptr
+            },
+            vk::DescriptorSetLayoutBinding {
+                .binding = 4,
+                .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+                .descriptorCount = 1,
+                .stageFlags = vk::ShaderStageFlagBits::eFragment,
+                .pImmutableSamplers = nullptr
+            },
+            vk::DescriptorSetLayoutBinding {
+                .binding = 5,
+                .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+                .descriptorCount = 1,
+                .stageFlags = vk::ShaderStageFlagBits::eFragment,
+                .pImmutableSamplers = nullptr
+            },
+            vk::DescriptorSetLayoutBinding {
+                .binding = 6,
                 .descriptorType = vk::DescriptorType::eCombinedImageSampler,
                 .descriptorCount = 1,
                 .stageFlags = vk::ShaderStageFlagBits::eFragment,
@@ -1523,6 +1557,21 @@ void VulkanApp::createOffScreenFramebuffer()
     createAttachment(vk::ImageUsageFlagBits::eColorAttachment, &offScreenFramebuffer.normal);
     // Albedo (color)
     offScreenFramebuffer.albedo.format = vk::Format::eR8G8B8A8Unorm;
+    createAttachment(vk::ImageUsageFlagBits::eColorAttachment, &offScreenFramebuffer.albedo);
+    // Metallic
+    offScreenFramebuffer.metallic.format = vk::Format::eR8G8B8A8Unorm;
+    createAttachment(vk::ImageUsageFlagBits::eColorAttachment, &offScreenFramebuffer.albedo);
+    // Roughness
+    offScreenFramebuffer.roughness.format = vk::Format::eR8G8B8A8Unorm;
+    createAttachment(vk::ImageUsageFlagBits::eColorAttachment, &offScreenFramebuffer.albedo);
+    // Emissive
+    offScreenFramebuffer.emissive.format = vk::Format::eR8G8B8A8Unorm;
+    createAttachment(vk::ImageUsageFlagBits::eColorAttachment, &offScreenFramebuffer.albedo);
+    // AO
+    offScreenFramebuffer.ao.format = vk::Format::eR8G8B8A8Unorm;
+    createAttachment(vk::ImageUsageFlagBits::eColorAttachment, &offScreenFramebuffer.albedo);
+    // ORM
+    offScreenFramebuffer.orm.format = vk::Format::eR8G8B8A8Unorm;
     createAttachment(vk::ImageUsageFlagBits::eColorAttachment, &offScreenFramebuffer.albedo);
 
     // Depth attachment

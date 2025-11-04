@@ -6,7 +6,9 @@
 [[vk::binding(1, 1)]] Sampler2D samplerNormalMap;
 [[vk::binding(2, 1)]] Sampler2D samplerMetallicMap;
 [[vk::binding(3, 1)]] Sampler2D samplerRoughnessMap;
-[[vk::binding(4, 1)]] Sampler2D aoMap;
+[[vk::binding(4, 1)]] Sampler2D samplerEmissiveMap;
+[[vk::binding(5, 1)]] Sampler2D samplerAOMap;
+[[vk::binding(6, 1)]] Sampler2D samplerORMMap;
 
 struct VSInput
 {
@@ -40,6 +42,11 @@ struct FSOutput
     float4 Position;
     float4 Normal;
     float4 Albedo;
+    float4 Metallic;
+    float4 Roughness;
+    float4 Emissive;
+    float4 AO;
+    float4 ORM;
 };
 
 struct UBO
@@ -91,5 +98,10 @@ FSOutput fragMain(VSOutput input)
     output.Normal = float4(tNorm, 1.0);
 
     output.Albedo = samplerColor.Sample(input.UV);
+    output.Metallic = samplerMetallicMap.Sample(input.UV);
+    output.Roughness = samplerRoughnessMap.Sample(input.UV);
+    output.Emissive = samplerEmissiveMap.Sample(input.UV);
+    output.AO = samplerAOMap.Sample(input.UV);
+    output.ORM = samplerORMMap.Sample(input.UV);
     return output;
 }

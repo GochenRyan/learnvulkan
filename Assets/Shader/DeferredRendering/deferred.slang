@@ -4,10 +4,12 @@
 */
 [[vk::binding(0, 0)]] Sampler2D samplerPosition;
 [[vk::binding(1, 0)]] Sampler2D samplerNormal;
-[[vk::binding(2, 0)]] Sampler2D smaplerAlbedo;
-[[vk::binding(3, 0)]] Sampler2D smaplerMetallic;
-[[vk::binding(4, 0)]] Sampler2D smaplerRoughness;
-[[vk::binding(5, 0)]] Sampler2D smaplerAO;
+[[vk::binding(2, 0)]] Sampler2D samplerAlbedo;
+[[vk::binding(3, 0)]] Sampler2D samplerMetallic;
+[[vk::binding(4, 0)]] Sampler2D samplerRoughness;
+[[vk::binding(5, 0)]] Sampler2D samplerEmissive;
+[[vk::binding(6, 0)]] Sampler2D samplerAO;
+[[vk::binding(7, 0)]] Sampler2D samplerORM;
 
 struct Light {
     float4 position;
@@ -22,7 +24,7 @@ struct UBO
     int displayDebugTarget;
 };
 
-[[vk::binding(3, 0)]] ConstantBuffer<UBO> ubo;
+[[vk::binding(8, 0)]] ConstantBuffer<UBO> ubo;
 
 struct VSOutput
 {
@@ -95,8 +97,18 @@ float4 fragMain(VSOutput input)
 {
     float3 fragPos = samplerPosition.Sample(input.UV).rgb;
     float3 normal = samplerNormal.Sample(input.UV).rgb;
-    float4 albedo = smaplerAlbedo.Sample(input.UV);
-
+    float3 albedo = pow(samplerAlbedo.Sample(input.UV).rgb, float3(2.2));
+    float3 emissive = samplerEmissive.Sample(input.UV).rgb;
+#if defined(USE_ORM)
+    float ao = samplerORM.Sample(input.UV).r;
+    float roughness = samplerORM.Sample(input.UV).g;
+    float metallic = samplerORM.Sample(input.UV).b;
+#else
+    float ao = samplerAO.Sample(input.UV).r;
+    float roughness = samplerRoughness.Sample(input.UV).r;
+    float metallic = samplerMetallic.Sample(input.UV).r;
+#endif
+    
     float3 fragColor;
 
     // Debug display
@@ -114,48 +126,61 @@ float4 fragMain(VSOutput input)
                 fragColor.rgb = albedo.rgb;
                 break;
             case 4:
-                fragColor.rgb = albedo.aaa;
+                fragColor.rgb = float3(ao, ao, ao);
                 break;
         }
         return float4(fragColor, 1.0);
     }
 
     #define lightCount 6
-    #define ambient 0.0
 
-    // Ambient part
-    fragColor = albedo.rgb * ambient;
+    float3 N = normalize(normal);
 
+    float3 V = ubo.viewPos.xyz - fragPos;
+    V = normalize(V);
+
+    // calculate reflectance at normal incidence; if dia-electric (like plastic) use F0
+    // of 0.04 and if it's a metal, use the albedo color as F0 (metallic workflow)
+    float3 F0 = float3(0.04);
+    F0 = lerp(F0, albedo.rgb, metallic);
+
+    float3 Lo = float3(0.0);
     for (int i = 0; i < lightCount; ++i)
     {
-        // Vector to light
-        float3 L = ubo.lights[i].position.xyz - fragPos;
-        // Distance from light to fragment position
-        float dist = length(L);
+        // calculate per-light radiance
+        float3 L = normalize(ubo.lights[i].position.xyz - fragPos);
+        float3 H = normalize(V + L);
+        float distance = length(ubo.lights[i].position.xyz - fragPos);
+        float attenuation = 1.0 / (distance * distance);
+        float3 radiance = ubo.lights[i].position.xyz * attenuation;
 
-        // Viewer to fragment
-        float3 V = ubo.viewPos.xyz - fragPos;
-        V = normalize(V);
+        // Cook-Torrance BRDF
+        float NDF = DistributionGGX(N, H, roughness);
+        float G = GeometrySmith(N, V, L, roughness);
+        float3 F = fresnelSchlick(clamp(dot(H, V), 0.0, 1.0), F0);
+        // float3 F = frenelUnreal(clamp(dot(H, V), 0.0, 1.0), F0);
 
-        // Light to fragment
-        L = normalize(L);
+        float3 nominator = NDF * G * F;
+        float denominator = 4 * max(dot(N, V), 0.0) * max(dot(N, L), 0.0);
+        float3 specular = nominator / max(denominator, 0.001);
 
-        // Attenuation
-        float atten = ubo.lights[i].radius / (pow(dist, 2.0) + 1.0);
+        // kS is equal to Fresnel
+        float3 kS = F;
+        float3 kD = float3(1.0) - kS;
+        kD *= 1.0 - metallic;
 
-        // Diffuse part
-        float3 N = normalize(normal);
-        float NdotL = max(0.0, dot(N, L));
-        float3 diff = ubo.lights[i].color * albedo.rgb * NdotL * atten;
+        float NdotL = max(dot(N, L), 0.0);
 
-        // Specular part
-        // Specular map values are stored in alpha of albedo mrt
-        float3 R = reflect(-L, N);
-        float NdotR = max(0.0, dot(R, V));
-        float3 spec = ubo.lights[i].color * albedo.a * pow(NdotR, 16.0) * atten;
-
-        fragColor += diff + spec;
+        Lo += (kD * albedo.rgb / PI + specular) * radiance * NdotL;
     }
+
+    float3 ambient = float3(0.03f) * albedo.rgb * ao;
+    float3 color = ambient + Lo + emissive;
+
+    // HDR tonemapping
+    color = color / (color + float3(1.0));
+    // gamma correct
+    fragColor = pow(color, float3(1.0 / 2.2));
 
     return float4(fragColor, 1.0);
 }

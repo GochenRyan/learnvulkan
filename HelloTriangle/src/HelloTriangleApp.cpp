@@ -424,8 +424,8 @@ void HelloTriangleApp::createSurface()
 
 void HelloTriangleApp::createGraphicPipeline()
 {
-    //auto shaderCode = readFile("Assets/Shader/HelloTriangle/slang.spv");
-    auto shaderCode = readFile(ASSETS_SRC_DIR "/Shader/HelloTriangle/slang.spv");
+    //auto shaderCode = readFile("Assets/Shader/HelloTriangle/shader.spv");
+    auto shaderCode = readFile(ASSETS_SRC_DIR "/Shader/HelloTriangle/shader.spv");
     vk::raii::ShaderModule shaderModule = createShaderModule(shaderCode);
 
     /*
