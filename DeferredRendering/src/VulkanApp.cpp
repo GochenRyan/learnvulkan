@@ -438,7 +438,23 @@ void VulkanApp::createSurface()
 
 void VulkanApp::createGraphicPipeline()
 {
-    auto shaderCode = readFile(ASSETS_SRC_DIR "/Shader/DeferredRendering/deferred.spv");
+    bool useORM = true;
+    if (models.size() > 0)
+    {
+        useORM = models[0].useORM;
+    }
+
+    std::vector<char> shaderCode;
+    if (useORM)
+    {
+        shaderCode = readFile(ASSETS_SRC_DIR "/Shader/DeferredRendering/deferred_ORM.spv");
+    }
+    else
+    {
+        shaderCode = readFile(ASSETS_SRC_DIR "/Shader/DeferredRendering/deferred.spv");
+    }
+
+    
     vk::raii::ShaderModule shaderModule = createShaderModule(shaderCode);
 
     /*
@@ -613,10 +629,15 @@ void VulkanApp::createGraphicPipeline()
     pipelineCI.pStages = mrtShaderStages.data();
     pipelineCI.renderPass = offScreenFramebuffer.renderPass;
 
-    std::array<vk::PipelineColorBlendAttachmentState, 3> blendAttachmentStates = {
-        vk::PipelineColorBlendAttachmentState {.blendEnable = vk::False, .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA,},
-        vk::PipelineColorBlendAttachmentState {.blendEnable = vk::False, .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA,},
-        vk::PipelineColorBlendAttachmentState {.blendEnable = vk::False, .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA,}
+    std::array<vk::PipelineColorBlendAttachmentState, 8> blendAttachmentStates = {
+        vk::PipelineColorBlendAttachmentState {.blendEnable = vk::False, .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA},
+        vk::PipelineColorBlendAttachmentState {.blendEnable = vk::False, .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA},
+        vk::PipelineColorBlendAttachmentState {.blendEnable = vk::False, .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA},
+        vk::PipelineColorBlendAttachmentState {.blendEnable = vk::False, .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA},
+        vk::PipelineColorBlendAttachmentState {.blendEnable = vk::False, .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA},
+        vk::PipelineColorBlendAttachmentState {.blendEnable = vk::False, .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA},
+        vk::PipelineColorBlendAttachmentState {.blendEnable = vk::False, .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA},
+        vk::PipelineColorBlendAttachmentState {.blendEnable = vk::False, .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA},
     };
     colorBlendingInfo.attachmentCount = static_cast<uint32_t>(blendAttachmentStates.size());
     colorBlendingInfo.pAttachments = blendAttachmentStates.data();
@@ -693,7 +714,12 @@ void VulkanApp::recordCommandBuffer(uint32_t imageIndex)
 
     // First render pass : Offscreen pass to fill deferred attachments
     {
-        std::array < vk::ClearValue, 4> clearValues{
+        std::array < vk::ClearValue, 9> clearValues{
+            vk::ClearColorValue(0.0f, 0.0f, 0.0f, 0.0f),
+            vk::ClearColorValue(0.0f, 0.0f, 0.0f, 0.0f),
+            vk::ClearColorValue(0.0f, 0.0f, 0.0f, 0.0f),
+            vk::ClearColorValue(0.0f, 0.0f, 0.0f, 0.0f),
+            vk::ClearColorValue(0.0f, 0.0f, 0.0f, 0.0f),
             vk::ClearColorValue(0.0f, 0.0f, 0.0f, 0.0f),
             vk::ClearColorValue(0.0f, 0.0f, 0.0f, 0.0f),
             vk::ClearColorValue(0.0f, 0.0f, 0.0f, 0.0f),
@@ -725,7 +751,7 @@ void VulkanApp::recordCommandBuffer(uint32_t imageIndex)
     // Second render pass: Composition
     // Note: Explicit synchronization is not required between the render pass, as this is done implicit via sub pass dependencies
     {
-        std::array < vk::ClearValue, 4> clearValues{
+        std::array < vk::ClearValue, 2> clearValues{
             vk::ClearColorValue(0.0f, 0.0f, 0.2f, 0.0f),
             vk::ClearDepthStencilValue(1.0f, 0)
         };
@@ -1189,12 +1215,10 @@ void VulkanApp::createDescriptorSets()
 
             descriptorSets[i].composition = std::move(deviceVK->logicDevice.allocateDescriptorSets(allocInfo)[0]);
 
-            
-
             std::vector<vk::WriteDescriptorSet> writeDescriptorSets;
 
             auto writeImageDescriptorSets = [&](vk::raii::ImageView& imageView) {
-                vk::DescriptorImageInfo descriptor{
+                vk::DescriptorImageInfo *descriptor = new vk::DescriptorImageInfo{
                     .sampler = colorSampler,
                     .imageView = imageView,
                     .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal
@@ -1205,7 +1229,7 @@ void VulkanApp::createDescriptorSets()
                     .dstArrayElement = 0,
                     .descriptorCount = 1,
                     .descriptorType = vk::DescriptorType::eCombinedImageSampler,
-                    .pImageInfo = &descriptor
+                    .pImageInfo = descriptor
                 };
                 writeDescriptorSets.push_back(descriptorWrite);
             };
@@ -1560,34 +1584,34 @@ void VulkanApp::createOffScreenFramebuffer()
     createAttachment(vk::ImageUsageFlagBits::eColorAttachment, &offScreenFramebuffer.albedo);
     // Metallic
     offScreenFramebuffer.metallic.format = vk::Format::eR8G8B8A8Unorm;
-    createAttachment(vk::ImageUsageFlagBits::eColorAttachment, &offScreenFramebuffer.albedo);
+    createAttachment(vk::ImageUsageFlagBits::eColorAttachment, &offScreenFramebuffer.metallic);
     // Roughness
     offScreenFramebuffer.roughness.format = vk::Format::eR8G8B8A8Unorm;
-    createAttachment(vk::ImageUsageFlagBits::eColorAttachment, &offScreenFramebuffer.albedo);
+    createAttachment(vk::ImageUsageFlagBits::eColorAttachment, &offScreenFramebuffer.roughness);
     // Emissive
     offScreenFramebuffer.emissive.format = vk::Format::eR8G8B8A8Unorm;
-    createAttachment(vk::ImageUsageFlagBits::eColorAttachment, &offScreenFramebuffer.albedo);
+    createAttachment(vk::ImageUsageFlagBits::eColorAttachment, &offScreenFramebuffer.emissive);
     // AO
     offScreenFramebuffer.ao.format = vk::Format::eR8G8B8A8Unorm;
-    createAttachment(vk::ImageUsageFlagBits::eColorAttachment, &offScreenFramebuffer.albedo);
+    createAttachment(vk::ImageUsageFlagBits::eColorAttachment, &offScreenFramebuffer.ao);
     // ORM
     offScreenFramebuffer.orm.format = vk::Format::eR8G8B8A8Unorm;
-    createAttachment(vk::ImageUsageFlagBits::eColorAttachment, &offScreenFramebuffer.albedo);
+    createAttachment(vk::ImageUsageFlagBits::eColorAttachment, &offScreenFramebuffer.orm);
 
     // Depth attachment
     offScreenFramebuffer.depth.format = findDepthFormat();
     createAttachment(vk::ImageUsageFlagBits::eDepthStencilAttachment, &offScreenFramebuffer.depth);
 
     // Set up separate renderpass with references to the color and depth attachments
-    std::array<vk::AttachmentDescription, 4> attachmentDescs = {};
-    for (size_t i = 0; i < 4; ++i)
+    std::array<vk::AttachmentDescription, 9> attachmentDescs = {};
+    for (size_t i = 0; i < attachmentDescs.size(); ++i)
     {
         attachmentDescs[i].samples = vk::SampleCountFlagBits::e1;
         attachmentDescs[i].loadOp = vk::AttachmentLoadOp::eClear;
         attachmentDescs[i].storeOp = vk::AttachmentStoreOp::eStore;
         attachmentDescs[i].stencilLoadOp = vk::AttachmentLoadOp::eDontCare;
         attachmentDescs[i].stencilStoreOp = vk::AttachmentStoreOp::eDontCare;
-        if (i == 3)
+        if (i == 8)
         {
             attachmentDescs[i].initialLayout = vk::ImageLayout::eUndefined;
             attachmentDescs[i].finalLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal;
@@ -1603,16 +1627,26 @@ void VulkanApp::createOffScreenFramebuffer()
     attachmentDescs[0].format = offScreenFramebuffer.position.format;
     attachmentDescs[1].format = offScreenFramebuffer.normal.format;
     attachmentDescs[2].format = offScreenFramebuffer.albedo.format;
-    attachmentDescs[3].format = offScreenFramebuffer.depth.format;
+    attachmentDescs[3].format = offScreenFramebuffer.metallic.format;
+    attachmentDescs[4].format = offScreenFramebuffer.roughness.format;
+    attachmentDescs[5].format = offScreenFramebuffer.emissive.format;
+    attachmentDescs[6].format = offScreenFramebuffer.ao.format;
+    attachmentDescs[7].format = offScreenFramebuffer.orm.format;
+    attachmentDescs[8].format = offScreenFramebuffer.depth.format;
 
     // AttachmentReference
     std::vector<vk::AttachmentReference> colorReferences;
     colorReferences.emplace_back(0, vk::ImageLayout::eAttachmentOptimal);
     colorReferences.emplace_back(1, vk::ImageLayout::eAttachmentOptimal);
     colorReferences.emplace_back(2, vk::ImageLayout::eAttachmentOptimal);
+    colorReferences.emplace_back(3, vk::ImageLayout::eAttachmentOptimal);
+    colorReferences.emplace_back(4, vk::ImageLayout::eAttachmentOptimal);
+    colorReferences.emplace_back(5, vk::ImageLayout::eAttachmentOptimal);
+    colorReferences.emplace_back(6, vk::ImageLayout::eAttachmentOptimal);
+    colorReferences.emplace_back(7, vk::ImageLayout::eAttachmentOptimal);
 
     vk::AttachmentReference depthReference = {};
-    depthReference.attachment = 3;
+    depthReference.attachment = 8;
     depthReference.layout = vk::ImageLayout::eDepthStencilAttachmentOptimal;
 
     vk::SubpassDescription subpass = {};
@@ -1652,17 +1686,22 @@ void VulkanApp::createOffScreenFramebuffer()
         .pAttachments = attachmentDescs.data(),
         .subpassCount = 1,
         .pSubpasses = &subpass,
-        .dependencyCount = 3,
+        .dependencyCount = static_cast<uint32_t>(dependencies.size()),
         .pDependencies = dependencies.data()
     };
 
     offScreenFramebuffer.renderPass = deviceVK->logicDevice.createRenderPass(renderPassInfo);
 
-    std::array<vk::ImageView, 4> attachments{};
+    std::array<vk::ImageView, 9> attachments{};
     attachments[0] = offScreenFramebuffer.position.view;
     attachments[1] = offScreenFramebuffer.normal.view;
     attachments[2] = offScreenFramebuffer.albedo.view;
-    attachments[3] = offScreenFramebuffer.depth.view;
+    attachments[3] = offScreenFramebuffer.metallic.view;
+    attachments[4] = offScreenFramebuffer.roughness.view;
+    attachments[5] = offScreenFramebuffer.emissive.view;
+    attachments[6] = offScreenFramebuffer.ao.view;
+    attachments[7] = offScreenFramebuffer.orm.view;
+    attachments[8] = offScreenFramebuffer.depth.view;
 
     vk::FramebufferCreateInfo framebufferCI{
         .renderPass = offScreenFramebuffer.renderPass,

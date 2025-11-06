@@ -226,6 +226,7 @@ void Model::createDescriptorSet(vk::raii::DescriptorPool& descriptorPool, vk::ra
         setupWriteDescriptorSets(RoughnessName);
         setupWriteDescriptorSets(EmissiveColorName);
         setupWriteDescriptorSets(AOName);
+        setupWriteDescriptorSets(ORMName);
 
         deviceVK->logicDevice.updateDescriptorSets(writeDescriptorSets, {});
     }
@@ -273,6 +274,8 @@ Model::~Model()
 
 bool Model::loadFromFile(std::string filename, VulkanDevice* device, const vk::raii::Queue &transferQueue, FileLoadingFlags fileLoadingFlags, float scale)
 {
+    this->deviceVK = device;
+
     if (emptyTextureTable.empty())
     {
         emptyTextureTable[BaseColorName] = std::move(createEmptyTexture(transferQueue, glm::vec4(255.f, 255.f, 255.f, 255.f)));
@@ -283,8 +286,6 @@ bool Model::loadFromFile(std::string filename, VulkanDevice* device, const vk::r
         emptyTextureTable[AOName] = std::move(createEmptyTexture(transferQueue, glm::vec4(255.f, 255.f, 255.f, 255.f)));
         emptyTextureTable[ORMName] = std::move(createEmptyTexture(transferQueue, glm::vec4(255.f, 255.f, 0.f, 255.f)));
     }
-
-    this->deviceVK = device;
 
     // Create manager & iosettings
     FbxManager* manager = FbxManager::Create();
@@ -451,7 +452,7 @@ void Model::loadMaterials(FbxNode* pNode, const vk::raii::Queue& transferQueue)
             }
             else
             {
-                std::cout << std::format("missing property name : {0}", pFBXPropertyName) << std::endl;
+                //std::cout << std::format("missing property name : {0}", pFBXPropertyName) << std::endl;
             }
 
             currentProperty = mat->GetNextProperty(currentProperty);
@@ -499,12 +500,13 @@ void Model::checkMaterials()
 
 void Model::checkORM()
 {
-    for (const auto& mat : materialLookup)
+    for (auto& mat : materialLookup)
     {
         if (mat.textureMap.at(AOName.data()) == mat.textureMap.at(RoughnessName.data()) &&
             mat.textureMap.at(AOName.data()) == mat.textureMap.at(MetallicName.data()))
         {
             useORM = true;
+            mat.textureMap[ORMName.data()] = mat.textureMap[AOName.data()];
             break;
         }
     }
