@@ -505,14 +505,6 @@ void VulkanApp::createGraphicPipeline()
         .depthClampEnable = vk::False,
         .rasterizerDiscardEnable = vk::False,
         .polygonMode = vk::PolygonMode::eFill,
-        .cullMode = vk::CullModeFlagBits::eBack,
-        /*
-            Nothing is visible because of the Y-flip we did in the projection matrix, 
-            the vertices are now being drawn in counter-clockwise order instead of clockwise order. 
-            This causes backface culling to kick in and prevents any geometry from being drawn.
-            The determination of face orientation occurs during the **rasterization stage**
-        */
-        .frontFace = vk::FrontFace::eCounterClockwise,
         .depthBiasEnable = vk::False,
         .depthBiasSlopeFactor = 1.0f,
         .lineWidth = 1.0f
@@ -579,7 +571,8 @@ void VulkanApp::createGraphicPipeline()
     };
 
     // The vertex coordinates of the fullscreen triangle are generated in a clockwise sequence
-    rasterizerCI.cullMode = vk::CullModeFlagBits::eFront;
+    rasterizerCI.frontFace = vk::FrontFace::eClockwise;
+    rasterizerCI.cullMode = vk::CullModeFlagBits::eBack;
     // Final fullscreen composition pass pipeline
     pipelines.composition = deviceVK->logicDevice.createGraphicsPipeline(nullptr, pipelineCI);
 
@@ -593,6 +586,7 @@ void VulkanApp::createGraphicPipeline()
         .pVertexAttributeDescriptions = attributeDescriptions.data()
     };
     pipelineCI.pVertexInputState = &vertexInputCI;
+    rasterizerCI.frontFace = vk::FrontFace::eCounterClockwise;
     rasterizerCI.cullMode = vk::CullModeFlagBits::eBack;
 
     // Offscreen pipeline

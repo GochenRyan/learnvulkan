@@ -187,5 +187,5 @@ private:
     glm::vec4 viewPos = glm::vec4();
 
     bool updated = true;
-    bool flipY = false;
+    bool flipY = true;
 };
