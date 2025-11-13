@@ -410,6 +410,7 @@ public:
      void loadMaterials(FbxNode* pNode, const vk::raii::Queue& transferQueue);
     // void loadAnimations();
      void createDescriptorSet(vk::raii::DescriptorPool& descriptorPool, vk::raii::DescriptorSetLayout& descriptorSetLayout);
+     static void ClearEmptyTextures() { emptyTextureTable.clear(); }
 public:
     Node* nodeFromIndex(uint32_t index);
 public:

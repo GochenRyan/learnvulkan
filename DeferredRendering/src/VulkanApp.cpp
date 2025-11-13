@@ -59,12 +59,16 @@ static void framebufferResizeCallback(GLFWwindow* window, int width, int height)
 static void mouseMovementCallback(GLFWwindow* window, double xpos, double ypos)
 {
     auto app = reinterpret_cast<VulkanApp*>(glfwGetWindowUserPointer(window));
-    std::cout << std::format("mouse pos : ({}, {})", xpos, ypos) << std::endl;
     double deltaXPos = xpos - app->lastXPos;
     double deltaYPos = ypos - app->lastYPos;
     app->camera.rotate(glm::vec3(-deltaYPos * app->camera.rotationSpeed, deltaXPos * app->camera.rotationSpeed, 0.0f));
     app->lastXPos = xpos;
     app->lastYPos = ypos;
+}
+
+VulkanApp::~VulkanApp()
+{
+    Model::ClearEmptyTextures();
 }
 
 vk::Extent2D VulkanApp::chooseSwapExtent(const vk::SurfaceCapabilitiesKHR& capabilities)
@@ -1055,9 +1059,21 @@ void VulkanApp::createDescriptors()
 void VulkanApp::createDescriptorPool()
 {
     constexpr int uniformBufferCount = 2;
-    constexpr int sampler2DCount = 15;
-    constexpr int margin = 2;
-    constexpr int maxSets = 3;
+    constexpr uint32_t mrtSampler2DCount = 8;
+    constexpr uint32_t margin = 10;
+
+    // Composition, Model UBO, materials
+    uint32_t maxSets = 1 + models.size();
+    for (const auto& model : models)
+    {
+        maxSets += model.materialLookup.size();
+    }
+
+    uint32_t totalMaterialCount = 0;
+    for (const auto& model : models)
+        totalMaterialCount += static_cast<uint32_t>(model.materialLookup.size());
+
+    uint32_t sampler2DCount = totalMaterialCount * 7 /*pbr tex count*/ + mrtSampler2DCount;
 
     std::array poolSizes{
         vk::DescriptorPoolSize{
@@ -1410,6 +1426,7 @@ bool VulkanApp::loadModel()
     bool flipV = true;
     auto& model = models.emplace_back();
 
+    //model.loadFromFile(ASSETS_SRC_DIR "/Model/game-ready-scifi-helmet/source/game-ready-scifi-helmet_pbs.fbx", deviceVK.get(), queue, FileLoadingFlags::PreTransformVertices | FileLoadingFlags::PreMultiplyVertexColors | FileLoadingFlags::FlipY);
     model.loadFromFile(ASSETS_SRC_DIR "/Model/scifipistol/source/SciFiPistol_pbs.fbx", deviceVK.get(), queue, FileLoadingFlags::PreTransformVertices | FileLoadingFlags::PreMultiplyVertexColors | FileLoadingFlags::FlipY);
 
     return true;

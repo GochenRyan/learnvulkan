@@ -63,7 +63,7 @@ public:
     VulkanApp& operator=(const VulkanApp& rhs) = delete;
     VulkanApp(VulkanApp&& rhs) = delete;
     VulkanApp& operator=(VulkanApp&& rhs) = delete;
-    ~VulkanApp() = default;
+    ~VulkanApp();
 public:
     void Run();
 private:
